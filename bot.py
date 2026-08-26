@@ -126,7 +126,7 @@ async def on_message(message):
 
         "date": "",
 
-        "username": str(message.author),
+        "username": message.author.display_name,
 
         "task": "",
 
