@@ -3,9 +3,6 @@ import threading
 from flask import Flask
 import discord
 
-# -----------------------------
-# Keep the Render web service alive
-# -----------------------------
 app = Flask(__name__)
 
 @app.route("/")
@@ -16,11 +13,8 @@ def run_web():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
 
-threading.Thread(target=run_web).start()
+threading.Thread(target=run_web, daemon=True).start()
 
-# -----------------------------
-# Discord Bot
-# -----------------------------
 intents = discord.Intents.default()
 intents.message_content = True
 
@@ -30,6 +24,7 @@ bot = discord.Client(intents=intents)
 async def on_ready():
     print("================================")
     print(f"BOT ONLINE: {bot.user}")
+    print(f"Connected to {len(bot.guilds)} server(s)")
     print("================================")
 
 @bot.event
@@ -37,15 +32,17 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    print("----- NEW MESSAGE -----")
+    print("================================")
+    print("NEW DISCORD MESSAGE")
     print(f"User: {message.author}")
     print(f"Channel: {message.channel}")
-    print(message.content)
-    print("-----------------------")
+    print(f"Message: {message.content}")
+    print("================================")
 
 BOT_TOKEN = os.environ.get("DISCORD_TOKEN")
 
 if not BOT_TOKEN:
+    print("ERROR: DISCORD_TOKEN is missing!")
     raise ValueError("DISCORD_TOKEN is not set!")
 
 bot.run(BOT_TOKEN)
