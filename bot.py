@@ -3,8 +3,6 @@ import threading
 import json
 import urllib.request
 import re
-from flask import Flask
-import discord
 
 # -----------------------------
 # Google Sheets Web App URL
