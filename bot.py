@@ -28,7 +28,9 @@ bot = discord.Client(intents=intents)
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user}")
+    print("================================")
+    print(f"BOT ONLINE: {bot.user}")
+    print("================================")
 
 @bot.event
 async def on_message(message):
