@@ -20,6 +20,8 @@ intents.message_content = True
 
 bot = discord.Client(intents=intents)
 
+print("BOT SCRIPT STARTED")
+
 @bot.event
 async def on_ready():
     print("================================")
