@@ -2,6 +2,7 @@ import os
 import threading
 import json
 import urllib.request
+import re
 from flask import Flask
 import discord
 
@@ -93,11 +94,14 @@ async def on_message(message):
     }
 
     # Read each field
-    for line in text.splitlines():
-        line = line.strip()
+ for line in text.splitlines():
+    line = line.strip()
 
-        if line.startswith("Date:"):
-            data["date"] = line.replace("Date:", "", 1).strip()
+    if line.startswith("Date:"):
+        data["date"] = line.replace("Date:", "", 1).strip()
+
+    elif re.match(r"^\d{1,2}/\d{1,2}/\d{2,4}\s*-\s*\d{1,2}/\d{1,2}/\d{2,4}$", line):
+        data["date"] = line
 
         elif line.startswith("Shot/Task:"):
             data["task"] = line.replace("Shot/Task:", "", 1).strip()
