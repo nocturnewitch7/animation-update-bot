@@ -17,7 +17,7 @@ DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 GOOGLE_SCRIPT_URL = os.environ.get("GOOGLE_SCRIPT_URL")
 
 UPDATE_CHANNEL_NAME = "🗓️waunimators_daily_log"
-UPDATE_CHANNEL_ID = 1504673300046151841
+UPDATE_CHANNEL_ID = 1504740541148172339
 
 # How far back the recovery system looks.
 # 24 hours = 24
