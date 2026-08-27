@@ -559,7 +559,7 @@ async def on_ready():
 @bot.event
 async def on_message(message):
 
-    print("🔥 LIVE MESSAGE EVENT RECEIVED")
+    print("LIVE MESSAGE EVENT RECEIVED")
 
     if message.channel.id != UPDATE_CHANNEL_ID:
         return
@@ -568,7 +568,6 @@ async def on_message(message):
         message,
         recovery=False
     )
-
 # ============================================================
 # START BOT
 # ============================================================
