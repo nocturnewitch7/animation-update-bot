@@ -560,6 +560,9 @@ async def on_ready():
 async def on_message(message):
 
     print("LIVE MESSAGE EVENT RECEIVED")
+    
+    print(f"CHANNEL ID: {message.channel.id}")
+    print(f"CHANNEL NAME: {message.channel.name}")
 
     if message.channel.id != UPDATE_CHANNEL_ID:
         return
