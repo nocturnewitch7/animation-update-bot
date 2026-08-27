@@ -559,6 +559,8 @@ async def on_ready():
 @bot.event
 async def on_message(message):
 
+    print("🔥 LIVE MESSAGE EVENT RECEIVED")
+
     # --------------------------------------------------------
     # Only monitor the update channel
     # --------------------------------------------------------
