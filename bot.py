@@ -2,7 +2,7 @@ import os
 import threading
 import json
 import urllib.request
-import re
+from datetime import timezone, timedelta
 
 from flask import Flask
 import discord
@@ -99,7 +99,6 @@ async def on_message(message):
     print("================================")
 
 
-    # Get message text
     text = message.content
 
 
@@ -119,12 +118,30 @@ async def on_message(message):
 
 
     # --------------------------------------------------------
-    # Create empty data record
+    # GET DATE AND TIME FROM DISCORD
+    # --------------------------------------------------------
+
+    malaysia_timezone = timezone(timedelta(hours=8))
+
+    message_time = message.created_at.replace(
+        tzinfo=timezone.utc
+    ).astimezone(malaysia_timezone)
+
+
+    date_value = message_time.strftime("%d/%m/%Y")
+
+    time_value = message_time.strftime("%I:%M %p")
+
+
+    # --------------------------------------------------------
+    # CREATE DATA RECORD
     # --------------------------------------------------------
 
     data = {
 
-        "date": "",
+        "date": date_value,
+
+        "time": time_value,
 
         "username": message.author.display_name,
 
@@ -142,7 +159,7 @@ async def on_message(message):
 
 
     # --------------------------------------------------------
-    # Read each line
+    # READ EACH LINE
     # --------------------------------------------------------
 
     for line in text.splitlines():
@@ -150,32 +167,7 @@ async def on_message(message):
         line = line.strip()
 
 
-        # Date format:
-        # Date: 26/8/26
-
-        if line.startswith("Date:"):
-
-            data["date"] = line.replace(
-                "Date:",
-                "",
-                1
-            ).strip()
-
-
-        # Date format:
-        # 6/8/26 - 7/8/26
-
-        elif re.match(
-            r"^\d{1,2}/\d{1,2}/\d{2,4}\s*-\s*\d{1,2}/\d{1,2}/\d{2,4}$",
-            line
-        ):
-
-            data["date"] = line
-
-
-        # Shot / Task
-
-        elif line.startswith("Shot/Task:"):
+        if line.startswith("Shot/Task:"):
 
             data["task"] = line.replace(
                 "Shot/Task:",
@@ -183,8 +175,6 @@ async def on_message(message):
                 1
             ).strip()
 
-
-        # Status
 
         elif line.startswith("Status:"):
 
@@ -195,8 +185,6 @@ async def on_message(message):
             ).strip()
 
 
-        # Difficulty
-
         elif line.startswith("Difficulty:"):
 
             data["difficulty"] = line.replace(
@@ -206,8 +194,6 @@ async def on_message(message):
             ).strip()
 
 
-        # Progress
-
         elif line.startswith("Progress %:"):
 
             data["progress"] = line.replace(
@@ -216,8 +202,6 @@ async def on_message(message):
                 1
             ).strip()
 
-
-        # Notes
 
         elif line.startswith("Notes:"):
 
@@ -229,7 +213,7 @@ async def on_message(message):
 
 
     # --------------------------------------------------------
-    # Show the data in Render logs
+    # SHOW DATA IN RENDER LOG
     # --------------------------------------------------------
 
     print("DATA TO GOOGLE SHEETS:")
@@ -237,7 +221,7 @@ async def on_message(message):
 
 
     # --------------------------------------------------------
-    # Send to Google Sheets
+    # SEND TO GOOGLE SHEETS
     # --------------------------------------------------------
 
     try:
