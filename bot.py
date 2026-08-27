@@ -1,36 +1,44 @@
 import os
+import re
+import asyncio
 import threading
-import json
-import urllib.request
-from datetime import timezone, timedelta
+from datetime import datetime, timezone, timedelta
 
-from flask import Flask
 import discord
+from flask import Flask
 
 
 # ============================================================
-# GOOGLE SHEETS
+# SETTINGS
 # ============================================================
 
-GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbwvM4ulLEEdt1oI2UWp5tQuGU9Ly6hZpQRkBe1pEreZccshIpiAvUPKUdu_SrwIuze4/exec"
+DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 
-
-# ============================================================
-# DISCORD CHANNEL
-# ============================================================
+GOOGLE_SCRIPT_URL = os.environ.get("GOOGLE_SCRIPT_URL")
 
 UPDATE_CHANNEL_NAME = "🗓️waunimators_daily_log"
 
-
-# ============================================================
-# HOW MANY RECENT MESSAGES TO CHECK
-# ============================================================
-
-MESSAGES_TO_CHECK = 300
+# How far back the recovery system looks.
+# 24 hours = 24
+RECOVERY_HOURS = 24
 
 
 # ============================================================
-# RENDER WEB SERVER
+# DISCORD INTENTS
+# ============================================================
+
+intents = discord.Intents.default()
+
+intents.message_content = True
+
+bot = discord.Client(
+    intents=intents
+)
+
+
+# ============================================================
+# FLASK SERVER
+# Keeps Render service alive
 # ============================================================
 
 app = Flask(__name__)
@@ -38,89 +46,134 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Animation Update Bot is running!"
+
+    return "Animation Update Bot is running."
 
 
-def run_web():
-
-    port = int(os.environ.get("PORT", 10000))
+def run_flask():
 
     app.run(
         host="0.0.0.0",
-        port=port
+        port=int(os.environ.get("PORT", 10000))
     )
 
 
-threading.Thread(
-    target=run_web,
-    daemon=True
-).start()
-
-
 # ============================================================
-# DISCORD BOT
+# TIMEZONE
+# Malaysia = UTC+8
 # ============================================================
 
-intents = discord.Intents.default()
-
-intents.message_content = True
-
-intents.guilds = True
-
-intents.messages = True
-
-
-bot = discord.Client(
-    intents=intents
+MALAYSIA_TIMEZONE = timezone(
+    timedelta(hours=8)
 )
 
 
-print("BOT SCRIPT STARTED")
+# ============================================================
+# DUPLICATE PROTECTION
+# ============================================================
+
+processed_message_ids = set()
+
+
+# ============================================================
+# PARSE FIELD
+# ============================================================
+
+def get_field(text, field_name):
+
+    pattern = rf"^{re.escape(field_name)}\s*:\s*(.*)$"
+
+    match = re.search(
+        pattern,
+        text,
+        re.MULTILINE | re.IGNORECASE
+    )
+
+    if match:
+
+        return match.group(1).strip()
+
+    return ""
 
 
 # ============================================================
 # SEND DATA TO GOOGLE SHEETS
 # ============================================================
 
-def send_to_google_sheet(data):
+async def send_to_google_sheets(data):
 
-    payload = json.dumps(data).encode("utf-8")
+    if not GOOGLE_SCRIPT_URL:
 
+        print("ERROR: GOOGLE_SCRIPT_URL is missing.")
 
-    request = urllib.request.Request(
-
-        GOOGLE_SHEET_URL,
-
-        data=payload,
-
-        headers={
-            "Content-Type": "application/json"
-        },
-
-        method="POST"
-
-    )
+        return False
 
 
-    with urllib.request.urlopen(
-        request,
-        timeout=20
-    ) as response:
+    import urllib.request
+    import urllib.parse
+    import json
 
-        result = response.read().decode("utf-8")
+
+    try:
+
+        payload = json.dumps(data).encode("utf-8")
+
+
+        request = urllib.request.Request(
+
+            GOOGLE_SCRIPT_URL,
+
+            data=payload,
+
+            headers={
+                "Content-Type": "application/json"
+            },
+
+            method="POST"
+        )
+
+
+        loop = asyncio.get_running_loop()
+
+
+        def send_request():
+
+            with urllib.request.urlopen(
+                request,
+                timeout=30
+            ) as response:
+
+                return response.read().decode("utf-8")
+
+
+        result = await loop.run_in_executor(
+            None,
+            send_request
+        )
+
 
         print(
             f"Google Sheets response: {result}"
         )
 
-        return result
+
+        return True
+
+
+    except Exception as error:
+
+        print(
+            f"ERROR sending to Google Sheets: {error}"
+        )
+
+        return False
 
 
 # ============================================================
 # PROCESS A DISCORD MESSAGE
 # ============================================================
 
-async def process_message(message):
+async def process_message(message, recovery=False):
 
     # --------------------------------------------------------
     # Ignore bots
@@ -132,11 +185,31 @@ async def process_message(message):
 
 
     # --------------------------------------------------------
-    # Ignore messages that are not animation updates
+    # Duplicate protection
+    # --------------------------------------------------------
+
+    message_id = str(message.id)
+
+
+    if message_id in processed_message_ids:
+
+        print(
+            f"SKIPPING DUPLICATE MESSAGE: {message_id}"
+        )
+
+        return
+
+
+    # --------------------------------------------------------
+    # Get message text
     # --------------------------------------------------------
 
     text = message.content
 
+
+    # --------------------------------------------------------
+    # Ignore messages that are not animation updates
+    # --------------------------------------------------------
 
     if "Shot/Task:" not in text:
 
@@ -148,9 +221,27 @@ async def process_message(message):
         return
 
 
+    # --------------------------------------------------------
+    # Mark as processed
+    # --------------------------------------------------------
+
+    processed_message_ids.add(message_id)
+
+
+    # --------------------------------------------------------
+    # Logging
+    # --------------------------------------------------------
+
     print("================================")
 
-    print("PROCESSING ANIMATION UPDATE")
+    if recovery:
+
+        print("RECOVERED DISCORD MESSAGE")
+
+    else:
+
+        print("NEW DISCORD MESSAGE")
+
 
     print(
         f"Message ID: {message.id}"
@@ -158,6 +249,10 @@ async def process_message(message):
 
     print(
         f"User: {message.author.display_name}"
+    )
+
+    print(
+        f"Channel: {message.channel.name}"
     )
 
     print(
@@ -171,15 +266,10 @@ async def process_message(message):
     # Convert Discord time to Malaysia time
     # --------------------------------------------------------
 
-    malaysia_timezone = timezone(
-        timedelta(hours=8)
-    )
-
-
     message_time = (
         message.created_at
         .replace(tzinfo=timezone.utc)
-        .astimezone(malaysia_timezone)
+        .astimezone(MALAYSIA_TIMEZONE)
     )
 
 
@@ -190,6 +280,40 @@ async def process_message(message):
 
     time_value = message_time.strftime(
         "%I:%M %p"
+    )
+
+
+    # --------------------------------------------------------
+    # Extract fields
+    # --------------------------------------------------------
+
+    task = get_field(
+        text,
+        "Shot/Task"
+    )
+
+
+    status = get_field(
+        text,
+        "Status"
+    )
+
+
+    difficulty = get_field(
+        text,
+        "Difficulty"
+    )
+
+
+    progress = get_field(
+        text,
+        "Progress %"
+    )
+
+
+    notes = get_field(
+        text,
+        "Notes"
     )
 
 
@@ -205,129 +329,58 @@ async def process_message(message):
 
         "username": message.author.display_name,
 
-        "task": "",
+        "task": task,
 
-        "status": "",
+        "status": status,
 
-        "difficulty": "",
+        "difficulty": difficulty,
 
-        "progress": "",
+        "progress": progress,
 
-        "notes": "",
+        "notes": notes,
 
-        "message_id": str(message.id)
-
+        "message_id": message_id
     }
 
 
     # --------------------------------------------------------
-    # Remove Discord bold formatting
+    # Show data
     # --------------------------------------------------------
 
-    text = text.replace(
-        "**",
-        ""
-    )
+    print("DATA TO GOOGLE SHEETS:")
 
+    print(data)
 
-    # --------------------------------------------------------
-    # Read each line
-    # --------------------------------------------------------
-
-    for line in text.splitlines():
-
-        line = line.strip()
-
-
-        if line.startswith(
-            "Shot/Task:"
-        ):
-
-            data["task"] = line.replace(
-                "Shot/Task:",
-                "",
-                1
-            ).strip()
-
-
-        elif line.startswith(
-            "Status:"
-        ):
-
-            data["status"] = line.replace(
-                "Status:",
-                "",
-                1
-            ).strip()
-
-
-        elif line.startswith(
-            "Difficulty:"
-        ):
-
-            data["difficulty"] = line.replace(
-                "Difficulty:",
-                "",
-                1
-            ).strip()
-
-
-        elif line.startswith(
-            "Progress %:"
-        ):
-
-            data["progress"] = line.replace(
-                "Progress %:",
-                "",
-                1
-            ).strip()
-
-
-        elif line.startswith(
-            "Notes:"
-        ):
-
-            data["notes"] = line.replace(
-                "Notes:",
-                "",
-                1
-            ).strip()
+    print("================================")
 
 
     # --------------------------------------------------------
     # Send to Google Sheets
     # --------------------------------------------------------
 
-    try:
-
-        result = send_to_google_sheet(
-            data
-        )
+    success = await send_to_google_sheets(
+        data
+    )
 
 
-        if result == "DUPLICATE":
-
-            print(
-                "SKIPPED: Message already exists in Google Sheets."
-            )
-
-
-        else:
-
-            print(
-                "SUCCESS: Update sent to Google Sheets!"
-            )
-
-
-    except Exception as error:
+    if success:
 
         print(
-            f"ERROR sending to Google Sheets: {error}"
+            "SUCCESS: Update sent to Google Sheets!"
         )
+
+    else:
+
+        print(
+            "FAILED: Update was NOT sent to Google Sheets."
+        )
+
+
+    print("================================")
 
 
 # ============================================================
-# CHECK MISSED MESSAGES
+# RECOVER MISSED MESSAGES
 # ============================================================
 
 async def check_missed_messages():
@@ -336,11 +389,34 @@ async def check_missed_messages():
 
     print("CHECKING FOR MISSED MESSAGES")
 
+    print(
+        f"Recovery window: LAST {RECOVERY_HOURS} HOURS"
+    )
+
     print("================================")
 
 
     found_channel = False
 
+
+    # --------------------------------------------------------
+    # Calculate recovery cutoff
+    # --------------------------------------------------------
+
+    now_utc = datetime.now(
+        timezone.utc
+    )
+
+
+    cutoff_time = (
+        now_utc -
+        timedelta(hours=RECOVERY_HOURS)
+    )
+
+
+    # --------------------------------------------------------
+    # Search every server
+    # --------------------------------------------------------
 
     for guild in bot.guilds:
 
@@ -359,35 +435,62 @@ async def check_missed_messages():
             )
 
 
+            print(
+                f"Looking for messages after: "
+                f"{cutoff_time}"
+            )
+
+
             try:
 
                 messages = []
 
 
+                # ------------------------------------------------
+                # Read recent history
+                # ------------------------------------------------
+
                 async for message in channel.history(
-                    limit=MESSAGES_TO_CHECK
+                    limit=200
                 ):
+
+                    # Discord gives newest first.
+                    # Once we reach a message older
+                    # than our recovery window,
+                    # we can stop.
+
+                    if message.created_at < cutoff_time:
+
+                        break
+
 
                     messages.append(
                         message
                     )
 
 
-                # Discord gives newest first.
-                # Reverse so we process oldest first.
+                # ------------------------------------------------
+                # Oldest first
+                # ------------------------------------------------
 
                 messages.reverse()
 
 
                 print(
-                    f"Checking {len(messages)} recent messages..."
+                    f"Found {len(messages)} messages "
+                    f"within recovery window."
                 )
 
+
+                # ------------------------------------------------
+                # Process messages
+                # ------------------------------------------------
 
                 for message in messages:
 
                     await process_message(
-                        message
+                        message,
+                        recovery=True
                     )
 
 
@@ -409,7 +512,8 @@ async def check_missed_messages():
     if not found_channel:
 
         print(
-            f"WARNING: Could not find #{UPDATE_CHANNEL_NAME}"
+            f"WARNING: Could not find "
+            f"#{UPDATE_CHANNEL_NAME}"
         )
 
 
@@ -440,44 +544,36 @@ async def on_ready():
     print("================================")
 
 
-    # Check recent messages
+    # --------------------------------------------------------
+    # Recover messages
+    # --------------------------------------------------------
 
     await check_missed_messages()
 
 
 # ============================================================
-# LIVE MESSAGE LISTENER
+# LIVE DISCORD MESSAGES
 # ============================================================
 
 @bot.event
 async def on_message(message):
 
-    # Ignore bots
-
-    if message.author.bot:
-
-        return
-
-
-    # Only monitor the specified channel
-
-    if not hasattr(
-        message.channel,
-        "name"
-    ):
-
-        return
-
+    # --------------------------------------------------------
+    # Only monitor the update channel
+    # --------------------------------------------------------
 
     if message.channel.name != UPDATE_CHANNEL_NAME:
 
         return
 
 
-    # Process the new message
+    # --------------------------------------------------------
+    # Process live message
+    # --------------------------------------------------------
 
     await process_message(
-        message
+        message,
+        recovery=False
     )
 
 
@@ -485,18 +581,37 @@ async def on_message(message):
 # START BOT
 # ============================================================
 
-BOT_TOKEN = os.environ.get(
-    "DISCORD_TOKEN"
+print("================================")
+
+print("BOT SCRIPT STARTED")
+
+print("================================")
+
+
+# ------------------------------------------------------------
+# Start Flask in background
+# ------------------------------------------------------------
+
+flask_thread = threading.Thread(
+    target=run_flask,
+    daemon=True
 )
 
+flask_thread.start()
 
-if not BOT_TOKEN:
 
-    raise ValueError(
-        "DISCORD_TOKEN is not set!"
+# ------------------------------------------------------------
+# Start Discord bot
+# ------------------------------------------------------------
+
+if not DISCORD_TOKEN:
+
+    print(
+        "ERROR: DISCORD_TOKEN environment variable is missing."
     )
 
+else:
 
-bot.run(
-    BOT_TOKEN
-)
+    bot.run(
+        DISCORD_TOKEN
+    )
