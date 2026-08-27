@@ -19,14 +19,14 @@ GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbwvM4ulLEEdt1oI2UWp5
 # DISCORD CHANNEL
 # ============================================================
 
-UPDATE_CHANNEL_NAME = "waunimators_daily_log"
+UPDATE_CHANNEL_NAME = "🗓️waunimators_daily_log"
 
 
 # ============================================================
 # HOW MANY RECENT MESSAGES TO CHECK
 # ============================================================
 
-MESSAGES_TO_CHECK = 200
+MESSAGES_TO_CHECK = 300
 
 
 # ============================================================
