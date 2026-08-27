@@ -561,23 +561,13 @@ async def on_message(message):
 
     print("🔥 LIVE MESSAGE EVENT RECEIVED")
 
-    # --------------------------------------------------------
-    # Only monitor the update channel
-    # --------------------------------------------------------
-
-   if message.channel.id != UPDATE_CHANNEL_ID:
-    return
-
-
-    # --------------------------------------------------------
-    # Process live message
-    # --------------------------------------------------------
+    if message.channel.id != UPDATE_CHANNEL_ID:
+        return
 
     await process_message(
         message,
         recovery=False
     )
-
 
 # ============================================================
 # START BOT
