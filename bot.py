@@ -421,132 +421,242 @@ async def process_message(
 async def check_missed_messages():
 
     print("================================")
-
-    print(
-        "STARTING FULL CHANNEL RECOVERY"
-    )
-
+    print("STARTING FULL CHANNEL RECOVERY")
     print("================================")
-
 
     found_channel = False
 
-    total_messages = 0
-
+    total_channel_messages = 0
+    total_thread_messages = 0
     animation_updates = 0
-
     successful_updates = 0
-
-
-    # --------------------------------------------------------
-    # Find correct channel
-    # --------------------------------------------------------
 
     for guild in bot.guilds:
 
         for channel in guild.text_channels:
 
-
             if channel.id != UPDATE_CHANNEL_ID:
-
                 continue
 
-
             found_channel = True
-
 
             print(
                 f"Found update channel: #{channel.name}"
             )
 
-
             try:
 
+                # ====================================================
+                # STEP 1 — READ MAIN CHANNEL
+                # ====================================================
+
                 print(
-                    "Reading ENTIRE channel history..."
+                    "Reading main channel history..."
                 )
 
-
-                # ------------------------------------------------
-                # Read every message from oldest to newest
-                # ------------------------------------------------
-
                 async for message in channel.history(
-
                     limit=None,
-
                     oldest_first=True
-
                 ):
 
-                    total_messages += 1
-
-
-                    # --------------------------------------------
-                    # Ignore bots
-                    # --------------------------------------------
+                    total_channel_messages += 1
 
                     if message.author.bot:
-
                         continue
-
-
-                    # --------------------------------------------
-                    # Ignore normal chat
-                    # --------------------------------------------
 
                     if "Shot/Task:" not in message.content:
-
                         continue
-
 
                     if "Status:" not in message.content:
-
                         continue
-
 
                     animation_updates += 1
 
-
                     print("================================")
-
                     print(
                         f"RECOVERY UPDATE #{animation_updates}"
                     )
-
                     print(
                         f"Message ID: {message.id}"
+                    )
+                    print(
+                        f"Source: MAIN CHANNEL"
+                    )
+                    print("================================")
+
+                    success = await process_message(
+                        message,
+                        recovery=True
+                    )
+
+                    if success:
+                        successful_updates += 1
+
+                    await asyncio.sleep(0.2)
+
+
+                # ====================================================
+                # STEP 2 — FIND ALL THREADS
+                # ====================================================
+
+                print("================================")
+                print("LOOKING FOR THREADS")
+                print("================================")
+
+
+                threads = []
+
+
+                # Active threads
+                active_threads = channel.threads
+
+
+                for thread in active_threads:
+
+                    if thread not in threads:
+
+                        threads.append(thread)
+
+
+                # Threads attached to channel messages
+                async for message in channel.history(
+                    limit=None,
+                    oldest_first=True
+                ):
+
+                    if message.thread:
+
+                        if message.thread not in threads:
+
+                            threads.append(
+                                message.thread
+                            )
+
+
+                print(
+                    f"Found {len(threads)} thread(s)."
+                )
+
+
+                # ====================================================
+                # STEP 3 — READ EVERY THREAD
+                # ====================================================
+
+                for thread in threads:
+
+                    print("================================")
+
+                    print(
+                        f"READING THREAD: #{thread.name}"
+                    )
+
+                    print(
+                        f"Thread ID: {thread.id}"
                     )
 
                     print("================================")
 
 
-                    success = await process_message(
+                    try:
 
-                        message,
+                        async for message in thread.history(
+                            limit=None,
+                            oldest_first=True
+                        ):
 
-                        recovery=True
-
-                    )
-
-
-                    if success:
-
-                        successful_updates += 1
+                            total_thread_messages += 1
 
 
-                    # Give the API a small breather
+                            if message.author.bot:
 
-                    await asyncio.sleep(
-                        0.2
-                    )
+                                continue
 
+
+                            if "Shot/Task:" not in message.content:
+
+                                continue
+
+
+                            if "Status:" not in message.content:
+
+                                continue
+
+
+                            animation_updates += 1
+
+
+                            print("================================")
+
+                            print(
+                                f"RECOVERY UPDATE #{animation_updates}"
+                            )
+
+                            print(
+                                f"Message ID: {message.id}"
+                            )
+
+                            print(
+                                f"Source: THREAD #{thread.name}"
+                            )
+
+                            print("================================")
+
+
+                            success = await process_message(
+
+                                message,
+
+                                recovery=True
+
+                            )
+
+
+                            if success:
+
+                                successful_updates += 1
+
+
+                            await asyncio.sleep(
+                                0.2
+                            )
+
+
+                    except discord.Forbidden:
+
+                        print(
+                            f"WARNING: Cannot read thread "
+                            f"#{thread.name}"
+                        )
+
+
+                    except Exception as error:
+
+                        print(
+                            f"ERROR reading thread "
+                            f"#{thread.name}: {error}"
+                        )
+
+
+                # ====================================================
+                # FINAL SUMMARY
+                # ====================================================
 
                 print("================================")
 
                 print(
-                    f"Total messages scanned: "
-                    f"{total_messages}"
+                    "FULL CHANNEL RECOVERY COMPLETE"
+                )
+
+                print("================================")
+
+                print(
+                    f"Main channel messages scanned: "
+                    f"{total_channel_messages}"
+                )
+
+                print(
+                    f"Thread messages scanned: "
+                    f"{total_thread_messages}"
                 )
 
                 print(
@@ -557,10 +667,6 @@ async def check_missed_messages():
                 print(
                     f"Updates sent successfully: "
                     f"{successful_updates}"
-                )
-
-                print(
-                    "FULL CHANNEL RECOVERY COMPLETE"
                 )
 
                 print("================================")
@@ -587,7 +693,6 @@ async def check_missed_messages():
         print(
             "WARNING: Could not find the update channel."
         )
-
 
 # ============================================================
 # BOT READY
