@@ -1,27 +1,39 @@
+```python
 import os
-import re
 import asyncio
-import threading
-from datetime import datetime, timezone, timedelta
+import json
+from datetime import timezone, timedelta
 
 import discord
+
 from flask import Flask
+from threading import Thread
 
 
 # ============================================================
-# SETTINGS
+# CONFIGURATION
 # ============================================================
 
-DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
-GOOGLE_SCRIPT_URL = os.environ.get("GOOGLE_SCRIPT_URL")
+GOOGLE_SCRIPT_URL = os.getenv("GOOGLE_SCRIPT_URL")
 
-UPDATE_CHANNEL_NAME = "🗓️waunimators_daily_log"
+# Actual update channel ID
 UPDATE_CHANNEL_ID = 1504740541148172339
 
-# How far back the recovery system looks.
-# 24 hours = 24
-RECOVERY_HOURS = 24
+
+# ============================================================
+# CHECK ENVIRONMENT VARIABLES
+# ============================================================
+
+if not DISCORD_TOKEN:
+
+    print("ERROR: DISCORD_TOKEN is missing.")
+
+
+if not GOOGLE_SCRIPT_URL:
+
+    print("ERROR: GOOGLE_SCRIPT_URL is missing.")
 
 
 # ============================================================
@@ -32,6 +44,11 @@ intents = discord.Intents.default()
 
 intents.message_content = True
 
+
+# ============================================================
+# CREATE BOT
+# ============================================================
+
 bot = discord.Client(
     intents=intents
 )
@@ -39,7 +56,6 @@ bot = discord.Client(
 
 # ============================================================
 # FLASK SERVER
-# Keeps Render service alive
 # ============================================================
 
 app = Flask(__name__)
@@ -55,46 +71,13 @@ def run_flask():
 
     app.run(
         host="0.0.0.0",
-        port=int(os.environ.get("PORT", 10000))
+        port=int(
+            os.environ.get(
+                "PORT",
+                10000
+            )
+        )
     )
-
-
-# ============================================================
-# TIMEZONE
-# Malaysia = UTC+8
-# ============================================================
-
-MALAYSIA_TIMEZONE = timezone(
-    timedelta(hours=8)
-)
-
-
-# ============================================================
-# DUPLICATE PROTECTION
-# ============================================================
-
-processed_message_ids = set()
-
-
-# ============================================================
-# PARSE FIELD
-# ============================================================
-
-def get_field(text, field_name):
-
-    pattern = rf"^{re.escape(field_name)}\s*:\s*(.*)$"
-
-    match = re.search(
-        pattern,
-        text,
-        re.MULTILINE | re.IGNORECASE
-    )
-
-    if match:
-
-        return match.group(1).strip()
-
-    return ""
 
 
 # ============================================================
@@ -105,19 +88,29 @@ async def send_to_google_sheets(data):
 
     if not GOOGLE_SCRIPT_URL:
 
-        print("ERROR: GOOGLE_SCRIPT_URL is missing.")
+        print(
+            "ERROR: GOOGLE_SCRIPT_URL is missing."
+        )
 
         return False
 
 
     import urllib.request
-    import urllib.parse
     import json
 
 
     try:
 
-        payload = json.dumps(data).encode("utf-8")
+        print(
+            "DATA TO GOOGLE SHEETS:"
+        )
+
+        print(data)
+
+
+        payload = json.dumps(
+            data
+        ).encode("utf-8")
 
 
         request = urllib.request.Request(
@@ -131,6 +124,7 @@ async def send_to_google_sheets(data):
             },
 
             method="POST"
+
         )
 
 
@@ -140,16 +134,24 @@ async def send_to_google_sheets(data):
         def send_request():
 
             with urllib.request.urlopen(
+
                 request,
+
                 timeout=30
+
             ) as response:
 
-                return response.read().decode("utf-8")
+                return response.read().decode(
+                    "utf-8"
+                )
 
 
         result = await loop.run_in_executor(
+
             None,
+
             send_request
+
         )
 
 
@@ -171,10 +173,13 @@ async def send_to_google_sheets(data):
 
 
 # ============================================================
-# PROCESS A DISCORD MESSAGE
+# PROCESS ONE DISCORD MESSAGE
 # ============================================================
 
-async def process_message(message, recovery=False):
+async def process_message(
+    message,
+    recovery=False
+):
 
     # --------------------------------------------------------
     # Ignore bots
@@ -182,51 +187,24 @@ async def process_message(message, recovery=False):
 
     if message.author.bot:
 
-        return
+        return False
 
 
     # --------------------------------------------------------
-    # Duplicate protection
-    # --------------------------------------------------------
-
-    message_id = str(message.id)
-
-
-    if message_id in processed_message_ids:
-
-        print(
-            f"SKIPPING DUPLICATE MESSAGE: {message_id}"
-        )
-
-        return
-
-
-    # --------------------------------------------------------
-    # Get message text
+    # Ignore messages that aren't animation updates
     # --------------------------------------------------------
 
     text = message.content
 
 
-    # --------------------------------------------------------
-    # Ignore messages that are not animation updates
-    # --------------------------------------------------------
-
     if "Shot/Task:" not in text:
 
-        return
+        return False
 
 
     if "Status:" not in text:
 
-        return
-
-
-    # --------------------------------------------------------
-    # Mark as processed
-    # --------------------------------------------------------
-
-    processed_message_ids.add(message_id)
+        return False
 
 
     # --------------------------------------------------------
@@ -235,42 +213,64 @@ async def process_message(message, recovery=False):
 
     print("================================")
 
+
     if recovery:
 
-        print("RECOVERED DISCORD MESSAGE")
+        print(
+            "PROCESSING RECOVERED MESSAGE"
+        )
 
     else:
 
-        print("NEW DISCORD MESSAGE")
+        print(
+            "PROCESSING LIVE ANIMATION UPDATE"
+        )
 
 
     print(
         f"Message ID: {message.id}"
     )
 
+
     print(
         f"User: {message.author.display_name}"
     )
+
 
     print(
         f"Channel: {message.channel.name}"
     )
 
+
     print(
         f"Message: {message.content}"
     )
+
 
     print("================================")
 
 
     # --------------------------------------------------------
-    # Convert Discord time to Malaysia time
+    # Malaysia time
     # --------------------------------------------------------
 
+    malaysia_timezone = timezone(
+        timedelta(hours=8)
+    )
+
+
     message_time = (
+
         message.created_at
-        .replace(tzinfo=timezone.utc)
-        .astimezone(MALAYSIA_TIMEZONE)
+
+        .replace(
+            tzinfo=timezone.utc
+        )
+
+        .astimezone(
+            malaysia_timezone
+        )
+
     )
 
 
@@ -281,40 +281,6 @@ async def process_message(message, recovery=False):
 
     time_value = message_time.strftime(
         "%I:%M %p"
-    )
-
-
-    # --------------------------------------------------------
-    # Extract fields
-    # --------------------------------------------------------
-
-    task = get_field(
-        text,
-        "Shot/Task"
-    )
-
-
-    status = get_field(
-        text,
-        "Status"
-    )
-
-
-    difficulty = get_field(
-        text,
-        "Difficulty"
-    )
-
-
-    progress = get_field(
-        text,
-        "Progress %"
-    )
-
-
-    notes = get_field(
-        text,
-        "Notes"
     )
 
 
@@ -330,29 +296,88 @@ async def process_message(message, recovery=False):
 
         "username": message.author.display_name,
 
-        "task": task,
+        "task": "",
 
-        "status": status,
+        "status": "",
 
-        "difficulty": difficulty,
+        "difficulty": "",
 
-        "progress": progress,
+        "progress": "",
 
-        "notes": notes,
+        "notes": "",
 
-        "message_id": message_id
+        "message_id": str(message.id)
+
     }
 
 
     # --------------------------------------------------------
-    # Show data
+    # Read fields
     # --------------------------------------------------------
 
-    print("DATA TO GOOGLE SHEETS:")
+    for line in text.splitlines():
 
-    print(data)
+        line = line.strip()
 
-    print("================================")
+
+        if line.startswith("Shot/Task:"):
+
+            data["task"] = (
+
+                line.split(
+                    "Shot/Task:",
+                    1
+                )[1].strip()
+
+            )
+
+
+        elif line.startswith("Status:"):
+
+            data["status"] = (
+
+                line.split(
+                    "Status:",
+                    1
+                )[1].strip()
+
+            )
+
+
+        elif line.startswith("Difficulty:"):
+
+            data["difficulty"] = (
+
+                line.split(
+                    "Difficulty:",
+                    1
+                )[1].strip()
+
+            )
+
+
+        elif line.startswith("Progress %:"):
+
+            data["progress"] = (
+
+                line.split(
+                    "Progress %:",
+                    1
+                )[1].strip()
+
+            )
+
+
+        elif line.startswith("Notes:"):
+
+            data["notes"] = (
+
+                line.split(
+                    "Notes:",
+                    1
+                )[1].strip()
+
+            )
 
 
     # --------------------------------------------------------
@@ -366,32 +391,40 @@ async def process_message(message, recovery=False):
 
     if success:
 
-        print(
-            "SUCCESS: Update sent to Google Sheets!"
-        )
+        if recovery:
 
-    else:
+            print(
+                "RECOVERY: Update sent to Google Sheets."
+            )
 
-        print(
-            "FAILED: Update was NOT sent to Google Sheets."
-        )
+        else:
+
+            print(
+                "LIVE UPDATE: Update sent to Google Sheets."
+            )
 
 
-    print("================================")
+        return True
+
+
+    print(
+        "FAILED: Update was NOT sent to Google Sheets."
+    )
+
+
+    return False
 
 
 # ============================================================
-# RECOVER MISSED MESSAGES
+# FULL CHANNEL RECOVERY
 # ============================================================
 
 async def check_missed_messages():
 
     print("================================")
 
-    print("CHECKING FOR MISSED MESSAGES")
-
     print(
-        f"Recovery window: LAST {RECOVERY_HOURS} HOURS"
+        "STARTING FULL CHANNEL RECOVERY"
     )
 
     print("================================")
@@ -399,31 +432,23 @@ async def check_missed_messages():
 
     found_channel = False
 
+    total_messages = 0
 
-    # --------------------------------------------------------
-    # Calculate recovery cutoff
-    # --------------------------------------------------------
+    animation_updates = 0
 
-    now_utc = datetime.now(
-        timezone.utc
-    )
-
-
-    cutoff_time = (
-        now_utc -
-        timedelta(hours=RECOVERY_HOURS)
-    )
+    successful_updates = 0
 
 
     # --------------------------------------------------------
-    # Search every server
+    # Find correct channel
     # --------------------------------------------------------
 
     for guild in bot.guilds:
 
         for channel in guild.text_channels:
 
-            if channel.name != UPDATE_CHANNEL_NAME:
+
+            if channel.id != UPDATE_CHANNEL_ID:
 
                 continue
 
@@ -436,63 +461,110 @@ async def check_missed_messages():
             )
 
 
-            print(
-                f"Looking for messages after: "
-                f"{cutoff_time}"
-            )
-
-
             try:
 
-                messages = []
-
-
-                # ------------------------------------------------
-                # Read recent history
-                # ------------------------------------------------
-
-                async for message in channel.history(
-                    limit=200
-                ):
-
-                    # Discord gives newest first.
-                    # Once we reach a message older
-                    # than our recovery window,
-                    # we can stop.
-
-                    if message.created_at < cutoff_time:
-
-                        break
-
-
-                    messages.append(
-                        message
-                    )
-
-
-                # ------------------------------------------------
-                # Oldest first
-                # ------------------------------------------------
-
-                messages.reverse()
-
-
                 print(
-                    f"Found {len(messages)} messages "
-                    f"within recovery window."
+                    "Reading ENTIRE channel history..."
                 )
 
 
                 # ------------------------------------------------
-                # Process messages
+                # Read every message from oldest to newest
                 # ------------------------------------------------
 
-                for message in messages:
+                async for message in channel.history(
 
-                    await process_message(
-                        message,
-                        recovery=True
+                    limit=None,
+
+                    oldest_first=True
+
+                ):
+
+                    total_messages += 1
+
+
+                    # --------------------------------------------
+                    # Ignore bots
+                    # --------------------------------------------
+
+                    if message.author.bot:
+
+                        continue
+
+
+                    # --------------------------------------------
+                    # Ignore normal chat
+                    # --------------------------------------------
+
+                    if "Shot/Task:" not in message.content:
+
+                        continue
+
+
+                    if "Status:" not in message.content:
+
+                        continue
+
+
+                    animation_updates += 1
+
+
+                    print("================================")
+
+                    print(
+                        f"RECOVERY UPDATE #{animation_updates}"
                     )
+
+                    print(
+                        f"Message ID: {message.id}"
+                    )
+
+                    print("================================")
+
+
+                    success = await process_message(
+
+                        message,
+
+                        recovery=True
+
+                    )
+
+
+                    if success:
+
+                        successful_updates += 1
+
+
+                    # Give the API a small breather
+
+                    await asyncio.sleep(
+                        0.2
+                    )
+
+
+                print("================================")
+
+                print(
+                    f"Total messages scanned: "
+                    f"{total_messages}"
+                )
+
+                print(
+                    f"Animation updates found: "
+                    f"{animation_updates}"
+                )
+
+                print(
+                    f"Updates sent successfully: "
+                    f"{successful_updates}"
+                )
+
+                print(
+                    "FULL CHANNEL RECOVERY COMPLETE"
+                )
+
+                print("================================")
 
 
             except discord.Forbidden:
@@ -506,23 +578,16 @@ async def check_missed_messages():
             except Exception as error:
 
                 print(
-                    f"ERROR reading channel history: {error}"
+                    f"ERROR reading channel history: "
+                    f"{error}"
                 )
 
 
     if not found_channel:
 
         print(
-            f"WARNING: Could not find "
-            f"#{UPDATE_CHANNEL_NAME}"
+            "WARNING: Could not find the update channel."
         )
-
-
-    print("================================")
-
-    print("MISSED MESSAGE CHECK COMPLETE")
-
-    print("================================")
 
 
 # ============================================================
@@ -544,64 +609,140 @@ async def on_ready():
 
     print("================================")
 
+    print(
+        "Bot is ready."
+    )
 
-    # --------------------------------------------------------
-    # Recover messages
-    # --------------------------------------------------------
+    print(
+        "Use !recover in the update channel "
+        "to scan the entire channel history."
+    )
 
-    await check_missed_messages()
+    print("================================")
 
 
 # ============================================================
-# LIVE DISCORD MESSAGES
+# HANDLE DISCORD MESSAGES
 # ============================================================
 
 @bot.event
 async def on_message(message):
 
-    print("LIVE MESSAGE EVENT RECEIVED")
-    
-    print(f"CHANNEL ID: {message.channel.id}")
-    print(f"CHANNEL NAME: {message.channel.name}")
+    # --------------------------------------------------------
+    # Ignore bot messages
+    # --------------------------------------------------------
 
-    if message.channel.id != UPDATE_CHANNEL_ID:
+    if message.author.bot:
+
         return
 
-    await process_message(
-        message,
-        recovery=False
+
+    # --------------------------------------------------------
+    # Show that a live message was received
+    # --------------------------------------------------------
+
+    print(
+        "LIVE MESSAGE EVENT RECEIVED"
     )
+
+
+    print(
+        f"CHANNEL ID: {message.channel.id}"
+    )
+
+
+    print(
+        f"CHANNEL NAME: {message.channel.name}"
+    )
+
+
+    # --------------------------------------------------------
+    # !recover command
+    # --------------------------------------------------------
+
+    if message.content.strip().lower() == "!recover":
+
+
+        if message.channel.id != UPDATE_CHANNEL_ID:
+
+            return
+
+
+        print("================================")
+
+        print(
+            "RECOVERY COMMAND RECEIVED"
+        )
+
+        print(
+            f"Requested by: "
+            f"{message.author.display_name}"
+        )
+
+        print("================================")
+
+
+        await check_missed_messages()
+
+
+        return
+
+
+    # --------------------------------------------------------
+    # Ignore other channels
+    # --------------------------------------------------------
+
+    if message.channel.id != UPDATE_CHANNEL_ID:
+
+        return
+
+
+    # --------------------------------------------------------
+    # Process normal live update
+    # --------------------------------------------------------
+
+    await process_message(
+
+        message,
+
+        recovery=False
+
+    )
+
+
 # ============================================================
-# START BOT
+# START FLASK SERVER
 # ============================================================
 
-print("================================")
+flask_thread = Thread(
 
-print("BOT SCRIPT STARTED")
-
-print("================================")
-
-
-# ------------------------------------------------------------
-# Start Flask in background
-# ------------------------------------------------------------
-
-flask_thread = threading.Thread(
     target=run_flask,
+
     daemon=True
+
 )
 
 flask_thread.start()
 
 
-# ------------------------------------------------------------
-# Start Discord bot
-# ------------------------------------------------------------
+# ============================================================
+# START DISCORD BOT
+# ============================================================
+
+print("================================")
+
+print(
+    "BOT SCRIPT STARTED"
+)
+
+print("================================")
+
 
 if not DISCORD_TOKEN:
 
     print(
-        "ERROR: DISCORD_TOKEN environment variable is missing."
+        "ERROR: Cannot start bot because "
+        "DISCORD_TOKEN is missing."
     )
 
 else:
@@ -609,3 +750,4 @@ else:
     bot.run(
         DISCORD_TOKEN
     )
+```
