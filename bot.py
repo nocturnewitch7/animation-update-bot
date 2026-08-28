@@ -16,7 +16,7 @@ from threading import Thread
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
-GOOGLE_SCRIPT_URL = os.getenv("https://script.google.com/macros/s/AKfycbwvM4ulLEEdt1oI2UWp5tQuGU9Ly6hZpQRkBe1pEreZccshIpiAvUPKUdu_SrwIuze4/exec")
+GOOGLE_SCRIPT_URL = os.getenv("GOOGLE_SCRIPT_URL")
 
 # ============================================================
 # IMPORTANT:
