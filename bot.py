@@ -1,6 +1,7 @@
 import os
 import asyncio
 import json
+import re
 from datetime import timezone, timedelta
 
 import discord
@@ -25,19 +26,17 @@ UPDATE_CHANNEL_ID = 1504673300046151841
 # ANIMATOR NAME MAPPING
 # ============================================================
 #
-# This is used by !recover.
+# Used by !recover.
 #
 # Example:
 #
 # !recover Usop
 #
-# The bot will look for messages from UCIOUP.
+# The bot will look for messages from the Discord names
+# listed under Usop.
 #
-# Add more Discord names here when needed.
-#
-# Format:
-#
-# "REAL NAME": ["DISCORD NAME 1", "DISCORD NAME 2"]
+# IMPORTANT:
+# The bot compares these against Discord DISPLAY NAMES.
 #
 # ============================================================
 
@@ -48,11 +47,11 @@ ANIMATOR_ALIASES = {
         "Yusof"
     ],
 
-     "Ralph": [
+    "Ralph": [
         "Syed"
     ],
 
-     "ilys": [
+    "ilys": [
         "Iliyas"
     ],
 
@@ -64,18 +63,10 @@ ANIMATOR_ALIASES = {
         "Jenggo"
     ],
 
-
-
-    # Add more people here later.
+    # Zul's Discord display name is already "zul",
+    # so no alias is required.
     #
-    # "Syed": [
-    #     "discord_username"
-    # ],
-    #
-    # "Shark": [
-    #     "discord_username"
-    # ],
-
+    # If needed later, we can add aliases here.
 }
 
 
@@ -168,10 +159,6 @@ async def send_to_google_sheets(data):
         return False
 
 
-    import urllib.request
-    import json
-
-
     try:
 
         print(
@@ -186,7 +173,10 @@ async def send_to_google_sheets(data):
         ).encode("utf-8")
 
 
-        request = urllib.request.Request(
+        request = __import__(
+            "urllib.request",
+            fromlist=["Request"]
+        ).Request(
 
             GOOGLE_SCRIPT_URL,
 
@@ -199,6 +189,9 @@ async def send_to_google_sheets(data):
             method="POST"
 
         )
+
+
+        import urllib.request
 
 
         loop = asyncio.get_running_loop()
@@ -246,6 +239,187 @@ async def send_to_google_sheets(data):
 
 
 # ============================================================
+# CLEAN DISCORD MESSAGE
+# ============================================================
+#
+# Discord users may write:
+#
+# **Shot/Task:** SH001
+#
+# instead of:
+#
+# Shot/Task: SH001
+#
+# This function removes common Discord markdown so the
+# parser can understand both versions.
+#
+# ============================================================
+
+def clean_discord_text(text):
+
+    if not text:
+
+        return ""
+
+    cleaned = text
+
+    cleaned = cleaned.replace(
+        "**",
+        ""
+    )
+
+    cleaned = cleaned.replace(
+        "__",
+        ""
+    )
+
+    cleaned = cleaned.replace(
+        "```",
+        ""
+    )
+
+    return cleaned
+
+
+# ============================================================
+# CHECK WHETHER MESSAGE LOOKS LIKE AN ANIMATION UPDATE
+# ============================================================
+
+def is_animation_update(message):
+
+    if message.author.bot:
+
+        return False
+
+
+    text = clean_discord_text(
+        message.content
+    )
+
+
+    # --------------------------------------------------------
+    # We require Shot/Task and Status.
+    #
+    # Other fields are optional.
+    #
+    # This means a message like Usop's is valid:
+    #
+    # Date : 26 August 2026
+    # Shot/Task: GELECEK POC
+    # Status: - Polishing shots
+    #
+    # --------------------------------------------------------
+
+    if not re.search(
+        r"Shot\s*/\s*Task\s*:",
+        text,
+        flags=re.IGNORECASE
+    ):
+
+        return False
+
+
+    if not re.search(
+        r"Status\s*:",
+        text,
+        flags=re.IGNORECASE
+    ):
+
+        return False
+
+
+    return True
+
+
+# ============================================================
+# GET FIELD FROM MESSAGE
+# ============================================================
+#
+# This parser is deliberately flexible.
+#
+# It can understand:
+#
+# Shot/Task: SH001
+#
+# **Shot/Task:** SH001
+#
+# Difficulty: - Progress %: 90%
+#
+# **Difficulty:** - **Progress %:** 90%
+#
+# Fields do NOT have to be on separate lines.
+#
+# ============================================================
+
+def get_field(text, field_name):
+
+    # Normalize markdown first
+    clean_text = clean_discord_text(
+        text
+    )
+
+
+    # Field names accepted:
+    #
+    # Shot/Task
+    # Status
+    # Difficulty
+    # Progress %
+    # Notes
+    #
+    pattern = (
+
+        rf"{re.escape(field_name)}"
+
+        rf"\s*:\s*"
+
+        rf"(.*?)"
+
+        rf"(?="
+
+        rf"\s+(?:"
+
+        rf"Shot\s*/\s*Task"
+
+        rf"|Status"
+
+        rf"|Difficulty"
+
+        rf"|Progress\s*%"
+
+        rf"|Notes"
+
+        rf")"
+
+        rf"\s*:"
+
+        rf"|$)"
+
+    )
+
+
+    match = re.search(
+
+        pattern,
+
+        clean_text,
+
+        flags=re.IGNORECASE | re.DOTALL
+
+    )
+
+
+    if match:
+
+        value = match.group(1).strip()
+
+        return value
+
+
+    return ""
+
+
+# ============================================================
 # PROCESS ONE DISCORD MESSAGE
 # ============================================================
 
@@ -264,18 +438,10 @@ async def process_message(
 
 
     # --------------------------------------------------------
-    # Ignore messages that aren't animation updates
+    # Check whether this is an animation update
     # --------------------------------------------------------
 
-    text = message.content
-
-
-    if "Shot/Task:" not in text:
-
-        return False
-
-
-    if "Status:" not in text:
+    if not is_animation_update(message):
 
         return False
 
@@ -307,6 +473,11 @@ async def process_message(
 
     print(
         f"User: {message.author.display_name}"
+    )
+
+
+    print(
+        f"Username: {message.author.name}"
     )
 
 
@@ -388,69 +559,60 @@ async def process_message(
     # Read fields
     # --------------------------------------------------------
 
-    for line in text.splitlines():
+    data["task"] = get_field(
 
-        line = line.strip()
+        message.content,
 
+        "Shot/Task"
 
-        if line.startswith("Shot/Task:"):
-
-            data["task"] = (
-
-                line.split(
-                    "Shot/Task:",
-                    1
-                )[1].strip()
-
-            )
+    )
 
 
-        elif line.startswith("Status:"):
+    data["status"] = get_field(
 
-            data["status"] = (
+        message.content,
 
-                line.split(
-                    "Status:",
-                    1
-                )[1].strip()
+        "Status"
 
-            )
+    )
 
 
-        elif line.startswith("Difficulty:"):
+    data["difficulty"] = get_field(
 
-            data["difficulty"] = (
+        message.content,
 
-                line.split(
-                    "Difficulty:",
-                    1
-                )[1].strip()
+        "Difficulty"
 
-            )
+    )
 
 
-        elif line.startswith("Progress %:"):
+    data["progress"] = get_field(
 
-            data["progress"] = (
+        message.content,
 
-                line.split(
-                    "Progress %:",
-                    1
-                )[1].strip()
+        "Progress %"
 
-            )
+    )
 
 
-        elif line.startswith("Notes:"):
+    data["notes"] = get_field(
 
-            data["notes"] = (
+        message.content,
 
-                line.split(
-                    "Notes:",
-                    1
-                )[1].strip()
+        "Notes"
 
-            )
+    )
+
+
+    # --------------------------------------------------------
+    # Logging extracted data
+    # --------------------------------------------------------
+
+    print("EXTRACTED DATA:")
+
+    print(
+        data
+    )
 
 
     # --------------------------------------------------------
@@ -497,16 +659,22 @@ def message_matches_animator(
     animator
 ):
 
-    requested = animator.strip().lower()
+    requested = (
+        animator.strip().lower()
+    )
+
 
     actual_name = (
+
         message.author.display_name
+
         or ""
+
     ).strip().lower()
 
 
     # --------------------------------------------------------
-    # Direct match
+    # Direct display-name match
     # --------------------------------------------------------
 
     if actual_name == requested:
@@ -544,6 +712,7 @@ async def check_missed_messages(
 ):
 
     global recovery_running
+
     global stop_recovery
 
 
@@ -662,12 +831,11 @@ async def check_missed_messages(
                                 continue
 
 
-                        if "Shot/Task:" not in message.content:
+                        # ------------------------------------------------
+                        # Use flexible update detection
+                        # ------------------------------------------------
 
-                            continue
-
-
-                        if "Status:" not in message.content:
+                        if not is_animation_update(message):
 
                             continue
 
@@ -690,6 +858,11 @@ async def check_missed_messages(
 
                         print(
                             "Source: MAIN CHANNEL"
+                        )
+
+
+                        print(
+                            f"User: {message.author.display_name}"
                         )
 
 
@@ -855,12 +1028,11 @@ async def check_missed_messages(
                                         continue
 
 
-                                if "Shot/Task:" not in message.content:
+                                # ------------------------------------------------
+                                # Use flexible update detection
+                                # ------------------------------------------------
 
-                                    continue
-
-
-                                if "Status:" not in message.content:
+                                if not is_animation_update(message):
 
                                     continue
 
@@ -883,6 +1055,11 @@ async def check_missed_messages(
 
                                 print(
                                     f"Source: THREAD #{thread.name}"
+                                )
+
+
+                                print(
+                                    f"User: {message.author.display_name}"
                                 )
 
 
@@ -1020,35 +1197,44 @@ async def on_ready():
 
     print("================================")
 
+
     print(
         f"Logged in as {bot.user}"
     )
+
 
     print(
         f"Connected to {len(bot.guilds)} server(s)"
     )
 
+
     print("================================")
+
 
     print(
         "Bot is ready."
     )
 
+
     print(
         "Commands:"
     )
+
 
     print(
         "!recover all"
     )
 
+
     print(
         "!recover <animator>"
     )
 
+
     print(
         "!stoprecover"
     )
+
 
     print("================================")
 
@@ -1092,7 +1278,7 @@ async def on_message(message):
 
 
     # --------------------------------------------------------
-    # Only allow commands in update channel
+    # Only allow commands and updates in update channel
     # --------------------------------------------------------
 
     if message.channel.id != UPDATE_CHANNEL_ID:
@@ -1113,23 +1299,30 @@ async def on_message(message):
                 "but no recovery is currently running."
             )
 
+
             await message.channel.send(
+
                 "There is no recovery currently running."
+
             )
+
 
             return
 
 
         print("================================")
 
+
         print(
             "STOP RECOVERY COMMAND RECEIVED"
         )
+
 
         print(
             f"Requested by: "
             f"{message.author.display_name}"
         )
+
 
         print("================================")
 
@@ -1138,8 +1331,10 @@ async def on_message(message):
 
 
         await message.channel.send(
+
             "🛑 Recovery stop requested. "
             "The bot will stop after the current message."
+
         )
 
 
@@ -1163,9 +1358,12 @@ async def on_message(message):
         if recovery_running:
 
             await message.channel.send(
+
                 "⚠️ A recovery is already running. "
                 "Use `!stoprecover` first if you want to stop it."
+
             )
+
 
             return
 
@@ -1180,7 +1378,7 @@ async def on_message(message):
 
 
         # ----------------------------------------------------
-        # !recover
+        # !recover without a name
         # ----------------------------------------------------
 
         if len(parts) == 1:
@@ -1196,6 +1394,7 @@ async def on_message(message):
                 "`!recover Usop`"
 
             )
+
 
             return
 
@@ -1217,6 +1416,7 @@ async def on_message(message):
 
 
         print("================================")
+
 
         print(
             "RECOVERY COMMAND RECEIVED"
@@ -1280,13 +1480,17 @@ async def on_message(message):
         if stop_recovery:
 
             await message.channel.send(
+
                 "🛑 Recovery stopped."
+
             )
 
         else:
 
             await message.channel.send(
+
                 "✅ Recovery complete."
+
             )
 
 
@@ -1327,9 +1531,11 @@ flask_thread.start()
 
 print("================================")
 
+
 print(
     "BOT SCRIPT STARTED"
 )
+
 
 print("================================")
 
@@ -1337,8 +1543,10 @@ print("================================")
 if not DISCORD_TOKEN:
 
     print(
+
         "ERROR: Cannot start bot because "
         "DISCORD_TOKEN is missing."
+
     )
 
 else:
