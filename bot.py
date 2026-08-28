@@ -18,7 +18,12 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
 GOOGLE_SCRIPT_URL = os.getenv("GOOGLE_SCRIPT_URL")
 
-# Actual update channel ID
+# ============================================================
+# IMPORTANT:
+# This is the ID of the MAIN animation update channel.
+# Animator threads underneath this channel are also accepted.
+# ============================================================
+
 UPDATE_CHANNEL_ID = 1504673300046151841
 
 
@@ -28,15 +33,14 @@ UPDATE_CHANNEL_ID = 1504673300046151841
 #
 # Used by !recover.
 #
+# The values are Discord DISPLAY NAMES.
+#
 # Example:
 #
 # !recover Usop
 #
-# The bot will look for messages from the Discord names
+# The bot will look for messages from the display names
 # listed under Usop.
-#
-# IMPORTANT:
-# The bot compares these against Discord DISPLAY NAMES.
 #
 # ============================================================
 
@@ -63,10 +67,8 @@ ANIMATOR_ALIASES = {
         "Jenggo"
     ],
 
-    # Zul's Discord display name is already "zul",
+    # Zul's Discord display name is simply "zul",
     # so no alias is required.
-    #
-    # If needed later, we can add aliases here.
 }
 
 
@@ -145,6 +147,50 @@ def run_flask():
 
 
 # ============================================================
+# CHECK WHETHER CHANNEL IS VALID
+# ============================================================
+#
+# A message is valid if it is:
+#
+# 1. In the main animation update channel
+#
+# OR
+#
+# 2. Inside a thread belonging to that channel
+#
+# This is the important fix for live animator updates.
+#
+# ============================================================
+
+def is_valid_update_location(message):
+
+    # --------------------------------------------------------
+    # Main channel
+    # --------------------------------------------------------
+
+    if message.channel.id == UPDATE_CHANNEL_ID:
+
+        return True
+
+
+    # --------------------------------------------------------
+    # Thread
+    # --------------------------------------------------------
+
+    if isinstance(
+        message.channel,
+        discord.Thread
+    ):
+
+        if message.channel.parent_id == UPDATE_CHANNEL_ID:
+
+            return True
+
+
+    return False
+
+
+# ============================================================
 # SEND DATA TO GOOGLE SHEETS
 # ============================================================
 
@@ -173,10 +219,10 @@ async def send_to_google_sheets(data):
         ).encode("utf-8")
 
 
-        request = __import__(
-            "urllib.request",
-            fromlist=["Request"]
-        ).Request(
+        import urllib.request
+
+
+        request = urllib.request.Request(
 
             GOOGLE_SCRIPT_URL,
 
@@ -189,9 +235,6 @@ async def send_to_google_sheets(data):
             method="POST"
 
         )
-
-
-        import urllib.request
 
 
         loop = asyncio.get_running_loop()
@@ -242,16 +285,15 @@ async def send_to_google_sheets(data):
 # CLEAN DISCORD MESSAGE
 # ============================================================
 #
-# Discord users may write:
+# Removes common Discord markdown.
+#
+# Allows:
 #
 # **Shot/Task:** SH001
 #
-# instead of:
+# to be treated the same as:
 #
 # Shot/Task: SH001
-#
-# This function removes common Discord markdown so the
-# parser can understand both versions.
 #
 # ============================================================
 
@@ -261,28 +303,33 @@ def clean_discord_text(text):
 
         return ""
 
+
     cleaned = text
+
 
     cleaned = cleaned.replace(
         "**",
         ""
     )
 
+
     cleaned = cleaned.replace(
         "__",
         ""
     )
+
 
     cleaned = cleaned.replace(
         "```",
         ""
     )
 
+
     return cleaned
 
 
 # ============================================================
-# CHECK WHETHER MESSAGE LOOKS LIKE AN ANIMATION UPDATE
+# CHECK WHETHER MESSAGE IS AN ANIMATION UPDATE
 # ============================================================
 
 def is_animation_update(message):
@@ -298,31 +345,34 @@ def is_animation_update(message):
 
 
     # --------------------------------------------------------
-    # We require Shot/Task and Status.
-    #
-    # Other fields are optional.
-    #
-    # This means a message like Usop's is valid:
-    #
-    # Date : 26 August 2026
-    # Shot/Task: GELECEK POC
-    # Status: - Polishing shots
-    #
+    # Shot/Task is required
     # --------------------------------------------------------
 
     if not re.search(
+
         r"Shot\s*/\s*Task\s*:",
+
         text,
+
         flags=re.IGNORECASE
+
     ):
 
         return False
 
 
+    # --------------------------------------------------------
+    # Status is required
+    # --------------------------------------------------------
+
     if not re.search(
+
         r"Status\s*:",
+
         text,
+
         flags=re.IGNORECASE
+
     ):
 
         return False
@@ -335,38 +385,26 @@ def is_animation_update(message):
 # GET FIELD FROM MESSAGE
 # ============================================================
 #
-# This parser is deliberately flexible.
+# Handles fields on separate lines OR the same line.
 #
-# It can understand:
-#
-# Shot/Task: SH001
-#
-# **Shot/Task:** SH001
+# Example:
 #
 # Difficulty: - Progress %: 90%
 #
-# **Difficulty:** - **Progress %:** 90%
+# will correctly produce:
 #
-# Fields do NOT have to be on separate lines.
+# Difficulty = -
+# Progress = 90%
 #
 # ============================================================
 
 def get_field(text, field_name):
 
-    # Normalize markdown first
     clean_text = clean_discord_text(
         text
     )
 
 
-    # Field names accepted:
-    #
-    # Shot/Task
-    # Status
-    # Difficulty
-    # Progress %
-    # Notes
-    #
     pattern = (
 
         rf"{re.escape(field_name)}"
@@ -411,9 +449,7 @@ def get_field(text, field_name):
 
     if match:
 
-        value = match.group(1).strip()
-
-        return value
+        return match.group(1).strip()
 
 
     return ""
@@ -438,7 +474,24 @@ async def process_message(
 
 
     # --------------------------------------------------------
-    # Check whether this is an animation update
+    # Check location
+    #
+    # During recovery this isn't strictly necessary because
+    # we already know where the message came from.
+    #
+    # For live messages it prevents unrelated channels from
+    # being processed.
+    # --------------------------------------------------------
+
+    if not recovery:
+
+        if not is_valid_update_location(message):
+
+            return False
+
+
+    # --------------------------------------------------------
+    # Check animation update format
     # --------------------------------------------------------
 
     if not is_animation_update(message):
@@ -660,7 +713,9 @@ def message_matches_animator(
 ):
 
     requested = (
+
         animator.strip().lower()
+
     )
 
 
@@ -754,8 +809,6 @@ async def check_missed_messages(
 
     successful_updates = 0
 
-    duplicates_skipped = 0
-
 
     try:
 
@@ -830,10 +883,6 @@ async def check_missed_messages(
 
                                 continue
 
-
-                        # ------------------------------------------------
-                        # Use flexible update detection
-                        # ------------------------------------------------
 
                         if not is_animation_update(message):
 
@@ -1028,10 +1077,6 @@ async def check_missed_messages(
                                         continue
 
 
-                                # ------------------------------------------------
-                                # Use flexible update detection
-                                # ------------------------------------------------
-
                                 if not is_animation_update(message):
 
                                     continue
@@ -1088,32 +1133,40 @@ async def check_missed_messages(
                         except discord.Forbidden:
 
                             print(
+
                                 f"WARNING: Cannot read thread "
                                 f"#{thread.name}"
+
                             )
 
 
                         except Exception as error:
 
                             print(
+
                                 f"ERROR reading thread "
                                 f"#{thread.name}: {error}"
+
                             )
 
 
                 except discord.Forbidden:
 
                     print(
+
                         "ERROR: Bot does not have permission "
                         "to read message history."
+
                     )
 
 
                 except Exception as error:
 
                     print(
+
                         f"ERROR reading channel history: "
                         f"{error}"
+
                     )
 
 
@@ -1278,10 +1331,18 @@ async def on_message(message):
 
 
     # --------------------------------------------------------
-    # Only allow commands and updates in update channel
+    # Check whether this is a valid location.
+    #
+    # IMPORTANT:
+    # This now accepts both the main channel and its threads.
     # --------------------------------------------------------
 
-    if message.channel.id != UPDATE_CHANNEL_ID:
+    if not is_valid_update_location(message):
+
+        print(
+            "IGNORED: Message is outside the update channel "
+            "and its threads."
+        )
 
         return
 
@@ -1391,7 +1452,7 @@ async def on_message(message):
 
                 "`!recover all`\n"
 
-                "`!recover Usop`"
+                "`!recover Zul`"
 
             )
 
