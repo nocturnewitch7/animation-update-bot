@@ -43,10 +43,28 @@ UPDATE_CHANNEL_ID = 1504673300046151841
 
 ANIMATOR_ALIASES = {
 
-    "Usop": [
-        "UCIOUP",
+    "UCIOUP": [
+        "Usop",
         "Yusof"
     ],
+
+     "Ralph": [
+        "Syed"
+    ],
+
+     "ilys": [
+        "Iliyas"
+    ],
+
+    "syahruldayan": [
+        "Syahrulul"
+    ],
+
+    ".gravillion": [
+        "Jenggo"
+    ],
+
+
 
     # Add more people here later.
     #
