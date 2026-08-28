@@ -22,17 +22,69 @@ UPDATE_CHANNEL_ID = 1504673300046151841
 
 
 # ============================================================
+# ANIMATOR NAME MAPPING
+# ============================================================
+#
+# This is used by !recover.
+#
+# Example:
+#
+# !recover Usop
+#
+# The bot will look for messages from UCIOUP.
+#
+# Add more Discord names here when needed.
+#
+# Format:
+#
+# "REAL NAME": ["DISCORD NAME 1", "DISCORD NAME 2"]
+#
+# ============================================================
+
+ANIMATOR_ALIASES = {
+
+    "Usop": [
+        "UCIOUP"
+    ],
+
+    # Add more people here later.
+    #
+    # "Syed": [
+    #     "discord_username"
+    # ],
+    #
+    # "Shark": [
+    #     "discord_username"
+    # ],
+
+}
+
+
+# ============================================================
+# RECOVERY CONTROL
+# ============================================================
+
+recovery_running = False
+
+stop_recovery = False
+
+
+# ============================================================
 # CHECK ENVIRONMENT VARIABLES
 # ============================================================
 
 if not DISCORD_TOKEN:
 
-    print("ERROR: DISCORD_TOKEN is missing.")
+    print(
+        "ERROR: DISCORD_TOKEN is missing."
+    )
 
 
 if not GOOGLE_SCRIPT_URL:
 
-    print("ERROR: GOOGLE_SCRIPT_URL is missing.")
+    print(
+        "ERROR: GOOGLE_SCRIPT_URL is missing."
+    )
 
 
 # ============================================================
@@ -69,13 +121,16 @@ def home():
 def run_flask():
 
     app.run(
+
         host="0.0.0.0",
+
         port=int(
             os.environ.get(
                 "PORT",
                 10000
             )
         )
+
     )
 
 
@@ -415,277 +470,519 @@ async def process_message(
 
 
 # ============================================================
+# CHECK WHETHER MESSAGE BELONGS TO REQUESTED ANIMATOR
+# ============================================================
+
+def message_matches_animator(
+    message,
+    animator
+):
+
+    requested = animator.strip().lower()
+
+    actual_name = (
+        message.author.display_name
+        or ""
+    ).strip().lower()
+
+
+    # --------------------------------------------------------
+    # Direct match
+    # --------------------------------------------------------
+
+    if actual_name == requested:
+
+        return True
+
+
+    # --------------------------------------------------------
+    # Check aliases
+    # --------------------------------------------------------
+
+    for real_name, aliases in ANIMATOR_ALIASES.items():
+
+        if real_name.lower() != requested:
+
+            continue
+
+
+        for alias in aliases:
+
+            if actual_name == alias.lower():
+
+                return True
+
+
+    return False
+
+
+# ============================================================
 # FULL CHANNEL RECOVERY
 # ============================================================
 
-async def check_missed_messages():
+async def check_missed_messages(
+    requested_animator=None
+):
+
+    global recovery_running
+    global stop_recovery
+
+
+    recovery_running = True
+
+    stop_recovery = False
+
 
     print("================================")
-    print("STARTING FULL CHANNEL RECOVERY")
+
+    print(
+        "STARTING FULL CHANNEL RECOVERY"
+    )
+
+
+    if requested_animator:
+
+        print(
+            f"Animator filter: {requested_animator}"
+        )
+
+    else:
+
+        print(
+            "Animator filter: ALL"
+        )
+
+
     print("================================")
+
 
     found_channel = False
 
     total_channel_messages = 0
+
     total_thread_messages = 0
+
     animation_updates = 0
+
     successful_updates = 0
 
-    for guild in bot.guilds:
-
-        for channel in guild.text_channels:
-
-            if channel.id != UPDATE_CHANNEL_ID:
-                continue
-
-            found_channel = True
-
-            print(
-                f"Found update channel: #{channel.name}"
-            )
-
-            try:
-
-                # ====================================================
-                # STEP 1 — READ MAIN CHANNEL
-                # ====================================================
-
-                print(
-                    "Reading main channel history..."
-                )
-
-                async for message in channel.history(
-                    limit=None,
-                    oldest_first=True
-                ):
-
-                    total_channel_messages += 1
-
-                    if message.author.bot:
-                        continue
-
-                    if "Shot/Task:" not in message.content:
-                        continue
-
-                    if "Status:" not in message.content:
-                        continue
-
-                    animation_updates += 1
-
-                    print("================================")
-                    print(
-                        f"RECOVERY UPDATE #{animation_updates}"
-                    )
-                    print(
-                        f"Message ID: {message.id}"
-                    )
-                    print(
-                        f"Source: MAIN CHANNEL"
-                    )
-                    print("================================")
-
-                    success = await process_message(
-                        message,
-                        recovery=True
-                    )
-
-                    if success:
-                        successful_updates += 1
-
-                    await asyncio.sleep(0.2)
+    duplicates_skipped = 0
 
 
-                # ====================================================
-                # STEP 2 — FIND ALL THREADS
-                # ====================================================
+    try:
 
-                print("================================")
-                print("LOOKING FOR THREADS")
-                print("================================")
+        for guild in bot.guilds:
 
+            if stop_recovery:
 
-                threads = []
+                break
 
 
-                # Active threads
-                active_threads = channel.threads
+            for channel in guild.text_channels:
+
+                if stop_recovery:
+
+                    break
 
 
-                for thread in active_threads:
+                if channel.id != UPDATE_CHANNEL_ID:
 
-                    if thread not in threads:
-
-                        threads.append(thread)
+                    continue
 
 
-                # Threads attached to channel messages
-                async for message in channel.history(
-                    limit=None,
-                    oldest_first=True
-                ):
-
-                    if message.thread:
-
-                        if message.thread not in threads:
-
-                            threads.append(
-                                message.thread
-                            )
+                found_channel = True
 
 
                 print(
-                    f"Found {len(threads)} thread(s)."
+                    f"Found update channel: #{channel.name}"
                 )
 
 
-                # ====================================================
-                # STEP 3 — READ EVERY THREAD
-                # ====================================================
+                try:
 
-                for thread in threads:
-
-                    print("================================")
+                    # ====================================================
+                    # STEP 1 — READ MAIN CHANNEL
+                    # ====================================================
 
                     print(
-                        f"READING THREAD: #{thread.name}"
+                        "Reading main channel history..."
                     )
 
-                    print(
-                        f"Thread ID: {thread.id}"
-                    )
 
-                    print("================================")
+                    async for message in channel.history(
 
+                        limit=None,
 
-                    try:
+                        oldest_first=True
 
-                        async for message in thread.history(
-                            limit=None,
-                            oldest_first=True
-                        ):
+                    ):
 
-                            total_thread_messages += 1
+                        if stop_recovery:
+
+                            break
 
 
-                            if message.author.bot:
-
-                                continue
+                        total_channel_messages += 1
 
 
-                            if "Shot/Task:" not in message.content:
+                        if message.author.bot:
 
-                                continue
-
-
-                            if "Status:" not in message.content:
-
-                                continue
+                            continue
 
 
-                            animation_updates += 1
+                        if requested_animator:
 
-
-                            print("================================")
-
-                            print(
-                                f"RECOVERY UPDATE #{animation_updates}"
-                            )
-
-                            print(
-                                f"Message ID: {message.id}"
-                            )
-
-                            print(
-                                f"Source: THREAD #{thread.name}"
-                            )
-
-                            print("================================")
-
-
-                            success = await process_message(
+                            if not message_matches_animator(
 
                                 message,
 
-                                recovery=True
+                                requested_animator
 
-                            )
+                            ):
 
-
-                            if success:
-
-                                successful_updates += 1
+                                continue
 
 
-                            await asyncio.sleep(
-                                0.2
-                            )
+                        if "Shot/Task:" not in message.content:
+
+                            continue
 
 
-                    except discord.Forbidden:
+                        if "Status:" not in message.content:
+
+                            continue
+
+
+                        animation_updates += 1
+
+
+                        print("================================")
+
 
                         print(
-                            f"WARNING: Cannot read thread "
-                            f"#{thread.name}"
+                            f"RECOVERY UPDATE #{animation_updates}"
                         )
 
 
-                    except Exception as error:
-
                         print(
-                            f"ERROR reading thread "
-                            f"#{thread.name}: {error}"
+                            f"Message ID: {message.id}"
                         )
 
 
-                # ====================================================
-                # FINAL SUMMARY
-                # ====================================================
-
-                print("================================")
-
-                print(
-                    "FULL CHANNEL RECOVERY COMPLETE"
-                )
-
-                print("================================")
-
-                print(
-                    f"Main channel messages scanned: "
-                    f"{total_channel_messages}"
-                )
-
-                print(
-                    f"Thread messages scanned: "
-                    f"{total_thread_messages}"
-                )
-
-                print(
-                    f"Animation updates found: "
-                    f"{animation_updates}"
-                )
-
-                print(
-                    f"Updates sent successfully: "
-                    f"{successful_updates}"
-                )
-
-                print("================================")
+                        print(
+                            "Source: MAIN CHANNEL"
+                        )
 
 
-            except discord.Forbidden:
-
-                print(
-                    "ERROR: Bot does not have permission "
-                    "to read message history."
-                )
+                        print("================================")
 
 
-            except Exception as error:
+                        success = await process_message(
 
-                print(
-                    f"ERROR reading channel history: "
-                    f"{error}"
-                )
+                            message,
+
+                            recovery=True
+
+                        )
+
+
+                        if success:
+
+                            successful_updates += 1
+
+
+                        await asyncio.sleep(
+                            0.2
+                        )
+
+
+                    # ====================================================
+                    # STOP CHECK
+                    # ====================================================
+
+                    if stop_recovery:
+
+                        break
+
+
+                    # ====================================================
+                    # STEP 2 — FIND ALL THREADS
+                    # ====================================================
+
+                    print("================================")
+
+                    print(
+                        "LOOKING FOR THREADS"
+                    )
+
+                    print("================================")
+
+
+                    threads = []
+
+
+                    # ----------------------------------------------------
+                    # Active threads
+                    # ----------------------------------------------------
+
+                    active_threads = channel.threads
+
+
+                    for thread in active_threads:
+
+                        if thread not in threads:
+
+                            threads.append(
+                                thread
+                            )
+
+
+                    # ----------------------------------------------------
+                    # Threads attached to channel messages
+                    # ----------------------------------------------------
+
+                    async for message in channel.history(
+
+                        limit=None,
+
+                        oldest_first=True
+
+                    ):
+
+                        if stop_recovery:
+
+                            break
+
+
+                        if message.thread:
+
+                            if message.thread not in threads:
+
+                                threads.append(
+                                    message.thread
+                                )
+
+
+                    if stop_recovery:
+
+                        break
+
+
+                    print(
+                        f"Found {len(threads)} thread(s)."
+                    )
+
+
+                    # ====================================================
+                    # STEP 3 — READ EVERY THREAD
+                    # ====================================================
+
+                    for thread in threads:
+
+                        if stop_recovery:
+
+                            break
+
+
+                        print("================================")
+
+
+                        print(
+                            f"READING THREAD: #{thread.name}"
+                        )
+
+
+                        print(
+                            f"Thread ID: {thread.id}"
+                        )
+
+
+                        print("================================")
+
+
+                        try:
+
+                            async for message in thread.history(
+
+                                limit=None,
+
+                                oldest_first=True
+
+                            ):
+
+                                if stop_recovery:
+
+                                    break
+
+
+                                total_thread_messages += 1
+
+
+                                if message.author.bot:
+
+                                    continue
+
+
+                                if requested_animator:
+
+                                    if not message_matches_animator(
+
+                                        message,
+
+                                        requested_animator
+
+                                    ):
+
+                                        continue
+
+
+                                if "Shot/Task:" not in message.content:
+
+                                    continue
+
+
+                                if "Status:" not in message.content:
+
+                                    continue
+
+
+                                animation_updates += 1
+
+
+                                print("================================")
+
+
+                                print(
+                                    f"RECOVERY UPDATE #{animation_updates}"
+                                )
+
+
+                                print(
+                                    f"Message ID: {message.id}"
+                                )
+
+
+                                print(
+                                    f"Source: THREAD #{thread.name}"
+                                )
+
+
+                                print("================================")
+
+
+                                success = await process_message(
+
+                                    message,
+
+                                    recovery=True
+
+                                )
+
+
+                                if success:
+
+                                    successful_updates += 1
+
+
+                                await asyncio.sleep(
+                                    0.2
+                                )
+
+
+                        except discord.Forbidden:
+
+                            print(
+                                f"WARNING: Cannot read thread "
+                                f"#{thread.name}"
+                            )
+
+
+                        except Exception as error:
+
+                            print(
+                                f"ERROR reading thread "
+                                f"#{thread.name}: {error}"
+                            )
+
+
+                except discord.Forbidden:
+
+                    print(
+                        "ERROR: Bot does not have permission "
+                        "to read message history."
+                    )
+
+
+                except Exception as error:
+
+                    print(
+                        f"ERROR reading channel history: "
+                        f"{error}"
+                    )
+
+
+    finally:
+
+        recovery_running = False
+
+
+        print("================================")
+
+
+        if stop_recovery:
+
+            print(
+                "RECOVERY STOPPED"
+            )
+
+        else:
+
+            print(
+                "FULL CHANNEL RECOVERY COMPLETE"
+            )
+
+
+        print("================================")
+
+
+        if requested_animator:
+
+            print(
+                f"Animator: {requested_animator}"
+            )
+
+        else:
+
+            print(
+                "Animator: ALL"
+            )
+
+
+        print(
+            f"Main channel messages scanned: "
+            f"{total_channel_messages}"
+        )
+
+
+        print(
+            f"Thread messages scanned: "
+            f"{total_thread_messages}"
+        )
+
+
+        print(
+            f"Animation updates found: "
+            f"{animation_updates}"
+        )
+
+
+        print(
+            f"Updates sent successfully: "
+            f"{successful_updates}"
+        )
+
+
+        print("================================")
 
 
     if not found_channel:
@@ -693,6 +990,7 @@ async def check_missed_messages():
         print(
             "WARNING: Could not find the update channel."
         )
+
 
 # ============================================================
 # BOT READY
@@ -718,8 +1016,19 @@ async def on_ready():
     )
 
     print(
-        "Use !recover in the update channel "
-        "to scan the entire channel history."
+        "Commands:"
+    )
+
+    print(
+        "!recover all"
+    )
+
+    print(
+        "!recover <animator>"
+    )
+
+    print(
+        "!stoprecover"
     )
 
     print("================================")
@@ -731,6 +1040,9 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
+
+    global stop_recovery
+
 
     # --------------------------------------------------------
     # Ignore bot messages
@@ -761,13 +1073,30 @@ async def on_message(message):
 
 
     # --------------------------------------------------------
-    # !recover command
+    # Only allow commands in update channel
     # --------------------------------------------------------
 
-    if message.content.strip().lower() == "!recover":
+    if message.channel.id != UPDATE_CHANNEL_ID:
+
+        return
 
 
-        if message.channel.id != UPDATE_CHANNEL_ID:
+    # ========================================================
+    # !stoprecover
+    # ========================================================
+
+    if message.content.strip().lower() == "!stoprecover":
+
+        if not recovery_running:
+
+            print(
+                "STOP REQUEST RECEIVED, "
+                "but no recovery is currently running."
+            )
+
+            await message.channel.send(
+                "There is no recovery currently running."
+            )
 
             return
 
@@ -775,7 +1104,7 @@ async def on_message(message):
         print("================================")
 
         print(
-            "RECOVERY COMMAND RECEIVED"
+            "STOP RECOVERY COMMAND RECEIVED"
         )
 
         print(
@@ -786,24 +1115,168 @@ async def on_message(message):
         print("================================")
 
 
-        await check_missed_messages()
+        stop_recovery = True
+
+
+        await message.channel.send(
+            "🛑 Recovery stop requested. "
+            "The bot will stop after the current message."
+        )
 
 
         return
 
 
-    # --------------------------------------------------------
-    # Ignore other channels
-    # --------------------------------------------------------
+    # ========================================================
+    # !recover
+    # ========================================================
 
-    if message.channel.id != UPDATE_CHANNEL_ID:
+    command = message.content.strip()
+
+
+    if command.lower().startswith("!recover"):
+
+
+        # ----------------------------------------------------
+        # Prevent two recoveries at the same time
+        # ----------------------------------------------------
+
+        if recovery_running:
+
+            await message.channel.send(
+                "⚠️ A recovery is already running. "
+                "Use `!stoprecover` first if you want to stop it."
+            )
+
+            return
+
+
+        # ----------------------------------------------------
+        # Split command
+        # ----------------------------------------------------
+
+        parts = command.split(
+            maxsplit=1
+        )
+
+
+        # ----------------------------------------------------
+        # !recover
+        # ----------------------------------------------------
+
+        if len(parts) == 1:
+
+            await message.channel.send(
+
+                "Please specify an animator or use `all`.\n\n"
+
+                "Examples:\n"
+
+                "`!recover all`\n"
+
+                "`!recover Usop`"
+
+            )
+
+            return
+
+
+        # ----------------------------------------------------
+        # Get requested animator
+        # ----------------------------------------------------
+
+        requested_animator = parts[1].strip()
+
+
+        # ----------------------------------------------------
+        # !recover all
+        # ----------------------------------------------------
+
+        if requested_animator.lower() == "all":
+
+            requested_animator = None
+
+
+        print("================================")
+
+        print(
+            "RECOVERY COMMAND RECEIVED"
+        )
+
+
+        print(
+            f"Requested by: "
+            f"{message.author.display_name}"
+        )
+
+
+        if requested_animator:
+
+            print(
+                f"Animator: {requested_animator}"
+            )
+
+        else:
+
+            print(
+                "Animator: ALL"
+            )
+
+
+        print("================================")
+
+
+        # ----------------------------------------------------
+        # Start recovery
+        # ----------------------------------------------------
+
+        await message.channel.send(
+
+            "🔎 Starting recovery"
+
+            + (
+
+                f" for **{requested_animator}**..."
+
+                if requested_animator
+
+                else " for **everyone**..."
+
+            )
+
+        )
+
+
+        await check_missed_messages(
+
+            requested_animator
+
+        )
+
+
+        # ----------------------------------------------------
+        # Recovery finished
+        # ----------------------------------------------------
+
+        if stop_recovery:
+
+            await message.channel.send(
+                "🛑 Recovery stopped."
+            )
+
+        else:
+
+            await message.channel.send(
+                "✅ Recovery complete."
+            )
+
 
         return
 
 
-    # --------------------------------------------------------
-    # Process normal live update
-    # --------------------------------------------------------
+    # ========================================================
+    # PROCESS NORMAL LIVE UPDATE
+    # ========================================================
 
     await process_message(
 
