@@ -18,7 +18,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 GOOGLE_SCRIPT_URL = os.getenv("GOOGLE_SCRIPT_URL")
 
 # Actual update channel ID
-UPDATE_CHANNEL_ID = 1504740541148172339
+UPDATE_CHANNEL_ID = 1504673300046151841
 
 
 # ============================================================
