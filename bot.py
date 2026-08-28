@@ -44,7 +44,8 @@ UPDATE_CHANNEL_ID = 1504673300046151841
 ANIMATOR_ALIASES = {
 
     "Usop": [
-        "UCIOUP"
+        "UCIOUP",
+        "Yusof"
     ],
 
     # Add more people here later.
