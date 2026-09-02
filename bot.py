@@ -30,10 +30,10 @@ if not GOOGLE_SCRIPT_URL:
 # CONFIGURATION
 # ============================================================
 
-# Main Discord channel where the animator threads live
+# Main Discord update channel
 UPDATE_CHANNEL_ID = 1504673300046151841
 
-# Malaysia timezone
+# Malaysia timezone (UTC+8)
 MALAYSIA_TZ = timezone(timedelta(hours=8))
 
 
@@ -45,12 +45,8 @@ ANIMATOR_ALIASES = {
     "UCIOUP": ["Usop", "Yusof"],
     "Ralph": ["Syed"],
     "ilys": ["Iliyas"],
-    "ilys2050": ["Iliyas"],
     "syahruldayan": ["Syahrulul"],
     ".gravillion": ["Jenggo"],
-    "spiderman4210": ["Zaqwan"],
-    "ralph4572": ["Syed"],
-    "rory_07": ["Rory"],
 }
 
 
@@ -67,6 +63,7 @@ recovery_stop_requested = False
 # ============================================================
 
 intents = discord.Intents.default()
+
 intents.message_content = True
 intents.messages = True
 intents.guilds = True
@@ -91,32 +88,38 @@ def home():
 
 
 def run_flask():
+
     app.run(
         host="0.0.0.0",
-        port=int(os.environ.get("PORT", 10000))
+        port=int(
+            os.environ.get(
+                "PORT",
+                10000
+            )
+        )
     )
 
 
 # ============================================================
-# CHECK IF MESSAGE IS IN THE CORRECT LOCATION
+# CHECK MESSAGE LOCATION
 # ============================================================
 
 def is_valid_update_location(message):
-    """
-    Accept messages from:
 
-    1. The main update channel
-    2. Threads directly under the main update channel
-    """
-
-    # Main channel
+    # Main update channel
     if message.channel.id == UPDATE_CHANNEL_ID:
         return True
 
-    # Thread under main channel
-    if isinstance(message.channel, discord.Thread):
+    # Thread belonging to main update channel
+    if isinstance(
+        message.channel,
+        discord.Thread
+    ):
 
-        if message.channel.parent_id == UPDATE_CHANNEL_ID:
+        if (
+            message.channel.parent_id
+            == UPDATE_CHANNEL_ID
+        ):
             return True
 
     return False
@@ -129,48 +132,100 @@ def is_valid_update_location(message):
 async def send_to_google_sheets(data):
 
     if not GOOGLE_SCRIPT_URL:
-        print("FAILED: GOOGLE_SCRIPT_URL is missing.")
-        return False
+
+        print(
+            "FAILED: GOOGLE_SCRIPT_URL is missing."
+        )
+
+        return "ERROR"
 
     try:
 
         import urllib.request
 
-        payload = json.dumps(data).encode("utf-8")
+        payload = json.dumps(
+            data
+        ).encode("utf-8")
 
         request = urllib.request.Request(
+
             GOOGLE_SCRIPT_URL,
+
             data=payload,
+
             headers={
-                "Content-Type": "application/json"
+                "Content-Type":
+                    "application/json"
             },
+
             method="POST"
         )
 
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(
+            request,
+            timeout=30
+        ) as response:
 
-            result = response.read().decode("utf-8")
+            result = (
+                response
+                .read()
+                .decode("utf-8")
+                .strip()
+            )
 
-            print("Google Sheets response:", result)
+            print(
+                "Google Sheets response:",
+                result
+            )
 
-            if "SUCCESS" in result.upper():
-                print("SUCCESS: Update sent to Google Sheets!")
-                return True
+            # ------------------------------------------------
+            # NEW UPDATE
+            # ------------------------------------------------
 
-            print("WARNING: Google Sheets returned:", result)
+            if result.upper() == "SUCCESS":
 
-            return False
+                print(
+                    "SUCCESS: Update sent to Google Sheets!"
+                )
+
+                return "SUCCESS"
+
+            # ------------------------------------------------
+            # DUPLICATE
+            # ------------------------------------------------
+
+            if result.upper() == "DUPLICATE":
+
+                print(
+                    "DUPLICATE: Update already exists. Skipping."
+                )
+
+                return "DUPLICATE"
+
+            # ------------------------------------------------
+            # OTHER RESPONSE
+            # ------------------------------------------------
+
+            print(
+                "WARNING: Unexpected Google Sheets response:",
+                result
+            )
+
+            return "ERROR"
 
     except Exception as e:
 
-        print("ERROR sending to Google Sheets:")
+        print(
+            "ERROR sending to Google Sheets:"
+        )
+
         print(e)
 
-        return False
+        return "ERROR"
 
 
 # ============================================================
-# CLEAN DISCORD MESSAGE
+# CLEAN DISCORD TEXT
 # ============================================================
 
 def clean_discord_text(text):
@@ -178,21 +233,35 @@ def clean_discord_text(text):
     if not text:
         return ""
 
-    # Remove Discord bold / underline formatting
-    text = text.replace("**", "")
-    text = text.replace("__", "")
+    # Remove bold
+    text = text.replace(
+        "**",
+        ""
+    )
+
+    # Remove underline
+    text = text.replace(
+        "__",
+        ""
+    )
 
     # Remove code blocks
-    text = text.replace("```", "")
+    text = text.replace(
+        "```",
+        ""
+    )
 
-    # Remove inline code formatting
-    text = text.replace("`", "")
+    # Remove inline code
+    text = text.replace(
+        "`",
+        ""
+    )
 
     return text.strip()
 
 
 # ============================================================
-# CHECK IF MESSAGE LOOKS LIKE AN ANIMATION UPDATE
+# CHECK IF MESSAGE IS AN ANIMATION UPDATE
 # ============================================================
 
 def is_animation_update(content):
@@ -200,36 +269,55 @@ def is_animation_update(content):
     if not content:
         return False
 
-    text = clean_discord_text(content)
+    text = clean_discord_text(
+        content
+    )
 
     has_shot_task = re.search(
+
         r"\bShot\s*/?\s*Task\s*:",
+
         text,
+
         re.IGNORECASE
     )
 
     has_status = re.search(
+
         r"\bStatus\s*:",
+
         text,
+
         re.IGNORECASE
     )
 
-    return bool(has_shot_task and has_status)
+    return bool(
+        has_shot_task
+        and has_status
+    )
 
 
 # ============================================================
-# EXTRACT A FIELD FROM THE MESSAGE
+# EXTRACT FIELD
 # ============================================================
 
-def get_field(text, field_name, next_fields=None):
+def get_field(
+    text,
+    field_name,
+    next_fields=None
+):
 
     if not text:
         return ""
 
-    text = clean_discord_text(text)
+    text = clean_discord_text(
+        text
+    )
 
     if next_fields is None:
+
         next_fields = [
+
             "Date",
             "Time",
             "Username",
@@ -238,20 +326,30 @@ def get_field(text, field_name, next_fields=None):
             "Difficulty",
             "Progress %",
             "Notes"
+
         ]
 
-    # Escape field names for regex
-    escaped_next_fields = [
-        re.escape(field)
-        for field in next_fields
-        if field.lower() != field_name.lower()
-    ]
+    escaped_fields = []
 
-    if escaped_next_fields:
+    for field in next_fields:
 
-        next_pattern = "|".join(escaped_next_fields)
+        if (
+            field.lower()
+            != field_name.lower()
+        ):
+
+            escaped_fields.append(
+                re.escape(field)
+            )
+
+    if escaped_fields:
+
+        next_pattern = "|".join(
+            escaped_fields
+        )
 
         pattern = (
+
             r"\b"
             + re.escape(field_name)
             + r"\s*:\s*"
@@ -259,20 +357,26 @@ def get_field(text, field_name, next_fields=None):
             r"(?=\s+(?:"
             + next_pattern
             + r")\s*:|$)"
+
         )
 
     else:
 
         pattern = (
+
             r"\b"
             + re.escape(field_name)
             + r"\s*:\s*(.*)$"
+
         )
 
     match = re.search(
+
         pattern,
         text,
-        re.IGNORECASE | re.DOTALL
+
+        re.IGNORECASE |
+        re.DOTALL
     )
 
     if not match:
@@ -280,8 +384,6 @@ def get_field(text, field_name, next_fields=None):
 
     value = match.group(1).strip()
 
-    # Remove leading "-" if the user wrote:
-    # Difficulty: - Progress %: 90%
     if value == "-":
         return ""
 
@@ -289,7 +391,7 @@ def get_field(text, field_name, next_fields=None):
 
 
 # ============================================================
-# PARSE DATE FROM COMMAND
+# PARSE RECOVERY DATE
 # ============================================================
 
 def parse_recovery_date(date_text):
@@ -301,26 +403,17 @@ def parse_recovery_date(date_text):
 
     formats = [
 
-        # 26/08/2026
         "%d/%m/%Y",
-
-        # 26/8/26
         "%d/%m/%y",
 
-        # 26-08-2026
         "%d-%m-%Y",
-
-        # 26-8-26
         "%d-%m-%y",
 
-        # 2026-08-26
         "%Y-%m-%d",
 
-        # 26 August 2026
         "%d %B %Y",
-
-        # 26 Aug 2026
         "%d %b %Y",
+
     ]
 
     for fmt in formats:
@@ -339,59 +432,96 @@ def parse_recovery_date(date_text):
 
 
 # ============================================================
-# CONVERT DISCORD TIME TO MALAYSIA TIME
+# CONVERT TO MALAYSIA TIME
 # ============================================================
 
 def malaysia_datetime(dt):
 
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
 
-    return dt.astimezone(MALAYSIA_TZ)
+        dt = dt.replace(
+            tzinfo=timezone.utc
+        )
+
+    return dt.astimezone(
+        MALAYSIA_TZ
+    )
 
 
 # ============================================================
-# CHECK WHETHER MESSAGE MATCHES REQUESTED ANIMATOR
+# CHECK ANIMATOR
 # ============================================================
 
-def message_matches_animator(message, requested_animator):
+def message_matches_animator(
+    message,
+    requested_animator
+):
 
     if not requested_animator:
         return True
 
-    requested = requested_animator.strip().lower()
+    requested = (
+        requested_animator
+        .strip()
+        .lower()
+    )
 
     author_display = (
-        getattr(message.author, "display_name", "")
+
+        getattr(
+            message.author,
+            "display_name",
+            ""
+        )
         or ""
+
     ).lower()
 
     author_username = (
-        getattr(message.author, "name", "")
+
+        getattr(
+            message.author,
+            "name",
+            ""
+        )
         or ""
+
     ).lower()
 
     author_global = (
-        getattr(message.author, "global_name", "")
+
+        getattr(
+            message.author,
+            "global_name",
+            ""
+        )
         or ""
+
     ).lower()
 
     # Direct match
     if requested in [
+
         author_display,
         author_username,
         author_global
+
     ]:
+
         return True
 
     # Alias match
     for key, aliases in ANIMATOR_ALIASES.items():
 
-        names = [key] + aliases
+        names = [
+            key
+        ] + aliases
 
         names_lower = [
+
             name.lower()
             for name in names
+
         ]
 
         if requested in names_lower:
@@ -399,20 +529,26 @@ def message_matches_animator(message, requested_animator):
             for name in names_lower:
 
                 if name in [
+
                     author_display,
                     author_username,
                     author_global
+
                 ]:
+
                     return True
 
     return False
 
 
 # ============================================================
-# CHECK WHETHER MESSAGE MATCHES REQUESTED DATE
+# CHECK MESSAGE DATE
 # ============================================================
 
-def message_matches_date(message, requested_date):
+def message_matches_date(
+    message,
+    requested_date
+):
 
     if not requested_date:
         return True
@@ -421,29 +557,49 @@ def message_matches_date(message, requested_date):
         message.created_at
     )
 
-    message_date = message_time.date()
-
-    return message_date == requested_date
+    return (
+        message_time.date()
+        == requested_date
+    )
 
 
 # ============================================================
 # PROCESS ONE MESSAGE
 # ============================================================
 
-async def process_message(message, source="LIVE"):
+async def process_message(
+    message,
+    source="LIVE"
+):
 
+    # Ignore bot messages
     if message.author.bot:
-        return False
+        return "IGNORED"
 
-    if not is_animation_update(message.content):
-        return False
+    # Check animation update
+    if not is_animation_update(
+        message.content
+    ):
+
+        return "IGNORED"
 
     print()
-    print("=" * 60)
-    print("ANIMATION UPDATE FOUND")
-    print("=" * 60)
+    print(
+        "=" * 60
+    )
 
-    print("Source:", source)
+    print(
+        "ANIMATION UPDATE FOUND"
+    )
+
+    print(
+        "=" * 60
+    )
+
+    print(
+        "Source:",
+        source
+    )
 
     print(
         "Author display name:",
@@ -478,23 +634,25 @@ async def process_message(message, source="LIVE"):
     )
 
     # --------------------------------------------------------
-    # MESSAGE TIME
+    # TIME
     # --------------------------------------------------------
 
     message_time = malaysia_datetime(
         message.created_at
     )
 
-    date_string = message_time.strftime(
-        "%d/%m/%Y"
+    date_string = (
+        message_time
+        .strftime("%d/%m/%Y")
     )
 
-    time_string = message_time.strftime(
-        "%H:%M"
+    time_string = (
+        message_time
+        .strftime("%H:%M")
     )
 
     # --------------------------------------------------------
-    # EXTRACT FIELDS
+    # FIELDS
     # --------------------------------------------------------
 
     shot_task = get_field(
@@ -528,107 +686,186 @@ async def process_message(message, source="LIVE"):
 
     if progress:
 
-        progress = progress.strip()
-
-        # Keep just the number if possible
         progress_match = re.search(
+
             r"(\d+(?:\.\d+)?)",
+
             progress
         )
 
         if progress_match:
-            progress = progress_match.group(1)
+
+            progress = (
+                progress_match
+                .group(1)
+            )
 
     # --------------------------------------------------------
     # USERNAME
     # --------------------------------------------------------
 
     username = getattr(
+
         message.author,
         "display_name",
         ""
+
     )
 
     if not username:
 
         username = getattr(
+
             message.author,
             "name",
             ""
+
         )
 
     # --------------------------------------------------------
-    # DATA TO GOOGLE SHEETS
+    # DATA
     # --------------------------------------------------------
 
     data = {
 
-        "date": date_string,
+        "date":
+            date_string,
 
-        "time": time_string,
+        "time":
+            time_string,
 
-        "username": username,
+        "username":
+            username,
 
-        "task": shot_task,
+        "task":
+            shot_task,
 
-        "status": status,
+        "status":
+            status,
 
-        "difficulty": difficulty,
+        "difficulty":
+            difficulty,
 
-        "progress": progress,
+        "progress":
+            progress,
 
-        "notes": notes,
+        "notes":
+            notes,
 
-        # Useful later for duplicate protection
-        "message_id": str(message.id),
+        "message_id":
+            str(message.id),
 
-        # Discord channel/thread name
-        "channel": getattr(
-            message.channel,
-            "name",
-            ""
-        ),
+        "channel":
+            getattr(
+                message.channel,
+                "name",
+                ""
+            )
+
     }
 
     # --------------------------------------------------------
-    # DEBUG OUTPUT
+    # DEBUG
     # --------------------------------------------------------
 
     print()
-    print("EXTRACTED DATA")
-    print("-" * 40)
+    print(
+        "EXTRACTED DATA"
+    )
 
-    print("Date:", data["date"])
-    print("Time:", data["time"])
-    print("Username:", data["username"])
-    print("Shot/Task:", data["task"])
-    print("Status:", data["status"])
-    print("Difficulty:", data["difficulty"])
-    print("Progress:", data["progress"])
-    print("Notes:", data["notes"])
-    print("Message ID:", data["message_id"])
-    print("Channel:", data["channel"])
+    print(
+        "-" * 40
+    )
 
-    print("-" * 40)
+    print(
+        "Date:",
+        data["date"]
+    )
+
+    print(
+        "Time:",
+        data["time"]
+    )
+
+    print(
+        "Username:",
+        data["username"]
+    )
+
+    print(
+        "Shot/Task:",
+        data["task"]
+    )
+
+    print(
+        "Status:",
+        data["status"]
+    )
+
+    print(
+        "Difficulty:",
+        data["difficulty"]
+    )
+
+    print(
+        "Progress:",
+        data["progress"]
+    )
+
+    print(
+        "Notes:",
+        data["notes"]
+    )
+
+    print(
+        "Message ID:",
+        data["message_id"]
+    )
+
+    print(
+        "Channel:",
+        data["channel"]
+    )
+
+    print(
+        "-" * 40
+    )
 
     # --------------------------------------------------------
     # SEND TO GOOGLE SHEETS
     # --------------------------------------------------------
 
-    success = await send_to_google_sheets(
+    result = await send_to_google_sheets(
         data
     )
 
-    if success:
-        print("SUCCESS: Update processed.")
-    else:
-        print("FAILED: Update was NOT sent to Google Sheets.")
+    # --------------------------------------------------------
+    # RESULT
+    # --------------------------------------------------------
 
-    return success
+    if result == "SUCCESS":
+
+        print(
+            "✅ NEW UPDATE ADDED"
+        )
+
+    elif result == "DUPLICATE":
+
+        print(
+            "🔄 DUPLICATE SKIPPED"
+        )
+
+    else:
+
+        print(
+            "❌ UPDATE FAILED"
+        )
+
+    return result
 
 
 # ============================================================
-# RECOVERY FUNCTION
+# RECOVERY
 # ============================================================
 
 async def check_missed_messages(
@@ -653,36 +890,40 @@ async def check_missed_messages(
     try:
 
         print()
-        print("=" * 70)
-        print("STARTING RECOVERY")
-        print("=" * 70)
+        print(
+            "=" * 70
+        )
 
-        if requested_animator:
-            print(
-                "Animator:",
-                requested_animator
-            )
-        else:
-            print(
-                "Animator: ALL"
-            )
+        print(
+            "STARTING RECOVERY"
+        )
 
-        if requested_date:
-            print(
-                "Date:",
-                requested_date.strftime(
-                    "%d/%m/%Y"
-                )
-            )
-        else:
-            print(
-                "Date: ALL"
-            )
+        print(
+            "=" * 70
+        )
 
-        print("=" * 70)
+        print(
+            "Animator:",
+            requested_animator
+            if requested_animator
+            else "ALL"
+        )
+
+        print(
+            "Date:",
+            requested_date.strftime(
+                "%d/%m/%Y"
+            )
+            if requested_date
+            else "ALL"
+        )
+
+        print(
+            "=" * 70
+        )
 
         # ----------------------------------------------------
-        # GET MAIN UPDATE CHANNEL
+        # GET CHANNEL
         # ----------------------------------------------------
 
         channel = bot.get_channel(
@@ -692,7 +933,7 @@ async def check_missed_messages(
         if not channel:
 
             print(
-                "Could not find update channel."
+                "ERROR: Could not find update channel."
             )
 
             return
@@ -711,6 +952,8 @@ async def check_missed_messages(
 
         updates_found = 0
         updates_sent = 0
+        duplicates_skipped = 0
+        errors = 0
 
         # ----------------------------------------------------
         # MAIN CHANNEL
@@ -729,25 +972,22 @@ async def check_missed_messages(
             if recovery_stop_requested:
 
                 print(
-                    "RECOVERY STOP REQUESTED."
+                    "🛑 RECOVERY STOP REQUESTED."
                 )
 
                 return
 
             main_messages_scanned += 1
 
-            # Don't process bots
             if message.author.bot:
                 continue
 
-            # Date filter
             if not message_matches_date(
                 message,
                 requested_date
             ):
                 continue
 
-            # Animator filter
             if not message_matches_animator(
                 message,
                 requested_animator
@@ -761,16 +1001,26 @@ async def check_missed_messages(
 
             updates_found += 1
 
-            success = await process_message(
+            result = await process_message(
                 message,
                 source="RECOVERY - MAIN CHANNEL"
             )
 
-            if success:
+            if result == "SUCCESS":
+
                 updates_sent += 1
 
-            # Give Discord a tiny break
-            await asyncio.sleep(0.05)
+            elif result == "DUPLICATE":
+
+                duplicates_skipped += 1
+
+            elif result == "ERROR":
+
+                errors += 1
+
+            await asyncio.sleep(
+                0.05
+            )
 
         print()
         print(
@@ -794,7 +1044,9 @@ async def check_missed_messages(
 
             for thread in channel.threads:
 
-                threads[thread.id] = thread
+                threads[
+                    thread.id
+                ] = thread
 
         except Exception as e:
 
@@ -810,7 +1062,9 @@ async def check_missed_messages(
                 limit=None
             ):
 
-                threads[thread.id] = thread
+                threads[
+                    thread.id
+                ] = thread
 
         except Exception as e:
 
@@ -833,7 +1087,7 @@ async def check_missed_messages(
             if recovery_stop_requested:
 
                 print(
-                    "RECOVERY STOP REQUESTED."
+                    "🛑 RECOVERY STOP REQUESTED."
                 )
 
                 return
@@ -865,7 +1119,7 @@ async def check_missed_messages(
                     if recovery_stop_requested:
 
                         print(
-                            "RECOVERY STOP REQUESTED."
+                            "🛑 RECOVERY STOP REQUESTED."
                         )
 
                         return
@@ -873,25 +1127,21 @@ async def check_missed_messages(
                     thread_messages_scanned += 1
                     thread_count += 1
 
-                    # Don't process bots
                     if message.author.bot:
                         continue
 
-                    # Date filter
                     if not message_matches_date(
                         message,
                         requested_date
                     ):
                         continue
 
-                    # Animator filter
                     if not message_matches_animator(
                         message,
                         requested_animator
                     ):
                         continue
 
-                    # Animation update check
                     if not is_animation_update(
                         message.content
                     ):
@@ -899,7 +1149,7 @@ async def check_missed_messages(
 
                     updates_found += 1
 
-                    success = await process_message(
+                    result = await process_message(
                         message,
                         source=(
                             "RECOVERY - THREAD: "
@@ -907,10 +1157,21 @@ async def check_missed_messages(
                         )
                     )
 
-                    if success:
+                    if result == "SUCCESS":
+
                         updates_sent += 1
 
-                    await asyncio.sleep(0.05)
+                    elif result == "DUPLICATE":
+
+                        duplicates_skipped += 1
+
+                    elif result == "ERROR":
+
+                        errors += 1
+
+                    await asyncio.sleep(
+                        0.05
+                    )
 
             except Exception as e:
 
@@ -921,19 +1182,29 @@ async def check_missed_messages(
 
                 print(e)
 
+                errors += 1
+
             print(
                 "Messages scanned in thread:",
                 thread_count
             )
 
         # ----------------------------------------------------
-        # FINAL SUMMARY
+        # SUMMARY
         # ----------------------------------------------------
 
         print()
-        print("=" * 70)
-        print("RECOVERY COMPLETE")
-        print("=" * 70)
+        print(
+            "=" * 70
+        )
+
+        print(
+            "RECOVERY COMPLETE"
+        )
+
+        print(
+            "=" * 70
+        )
 
         print(
             "Animator:",
@@ -967,11 +1238,23 @@ async def check_missed_messages(
         )
 
         print(
-            "Updates sent successfully:",
+            "New updates sent:",
             updates_sent
         )
 
-        print("=" * 70)
+        print(
+            "Duplicates skipped:",
+            duplicates_skipped
+        )
+
+        print(
+            "Errors:",
+            errors
+        )
+
+        print(
+            "=" * 70
+        )
 
     except Exception as e:
 
@@ -996,9 +1279,17 @@ async def check_missed_messages(
 async def on_ready():
 
     print()
-    print("=" * 60)
-    print("BOT IS READY")
-    print("=" * 60)
+    print(
+        "=" * 60
+    )
+
+    print(
+        "BOT IS READY"
+    )
+
+    print(
+        "=" * 60
+    )
 
     print(
         "Logged in as:",
@@ -1040,7 +1331,7 @@ async def on_ready():
 
     print()
     print(
-        "Commands:"
+        "Available commands:"
     )
 
     print(
@@ -1060,10 +1351,16 @@ async def on_ready():
     )
 
     print(
+        "!recover 26/08/2026"
+    )
+
+    print(
         "!stoprecover"
     )
 
-    print("=" * 60)
+    print(
+        "=" * 60
+    )
 
 
 # ============================================================
@@ -1102,7 +1399,7 @@ async def on_message(message):
     )
 
     # --------------------------------------------------------
-    # Ignore bots
+    # IGNORE BOT
     # --------------------------------------------------------
 
     if message.author.bot:
@@ -1118,7 +1415,7 @@ async def on_message(message):
         return
 
     # --------------------------------------------------------
-    # Allow commands from anywhere
+    # PROCESS COMMANDS
     # --------------------------------------------------------
 
     await bot.process_commands(
@@ -1126,7 +1423,7 @@ async def on_message(message):
     )
 
     # --------------------------------------------------------
-    # Check channel / thread
+    # CHECK LOCATION
     # --------------------------------------------------------
 
     if not is_valid_update_location(
@@ -1140,7 +1437,7 @@ async def on_message(message):
         return
 
     # --------------------------------------------------------
-    # Check whether it looks like an update
+    # CHECK UPDATE
     # --------------------------------------------------------
 
     if not is_animation_update(
@@ -1154,7 +1451,7 @@ async def on_message(message):
         return
 
     # --------------------------------------------------------
-    # Process update
+    # PROCESS
     # --------------------------------------------------------
 
     await process_message(
@@ -1164,10 +1461,12 @@ async def on_message(message):
 
 
 # ============================================================
-# !RECOVER COMMAND
+# !RECOVER
 # ============================================================
 
-@bot.command(name="recover")
+@bot.command(
+    name="recover"
+)
 async def recover_command(
     ctx,
     *args
@@ -1192,8 +1491,10 @@ async def recover_command(
     if recovery_running:
 
         await ctx.send(
-            "⚠️ A recovery is already running. "
-            "Use `!stoprecover` first if you want to stop it."
+
+            "⚠️ A recovery is already running.\n"
+            "Use `!stoprecover` if you want to stop it."
+
         )
 
         return
@@ -1201,12 +1502,21 @@ async def recover_command(
     if not args:
 
         await ctx.send(
+
             "Please specify an animator or `all`.\n\n"
+
             "Examples:\n"
+
             "`!recover all`\n"
+
             "`!recover Zul`\n"
+
             "`!recover all 26/08/2026`\n"
-            "`!recover Zul 26/08/2026`"
+
+            "`!recover Zul 26/08/2026`\n"
+
+            "`!recover 26/08/2026`"
+
         )
 
         return
@@ -1220,12 +1530,11 @@ async def recover_command(
 
     first_arg = args[0].strip()
 
-    # If first argument is a date,
-    # assume user wants ALL animators
     possible_date = parse_recovery_date(
         first_arg
     )
 
+    # !recover 26/08/2026
     if possible_date:
 
         requested_animator = None
@@ -1233,16 +1542,18 @@ async def recover_command(
 
     else:
 
+        # !recover all
         if first_arg.lower() == "all":
 
             requested_animator = None
 
+        # !recover Zul
         else:
 
             requested_animator = first_arg
 
         # ----------------------------------------------------
-        # SECOND ARGUMENT = DATE
+        # DATE ARGUMENT
         # ----------------------------------------------------
 
         if len(args) >= 2:
@@ -1258,66 +1569,87 @@ async def recover_command(
             if not requested_date:
 
                 await ctx.send(
+
                     "❌ I couldn't understand that date.\n\n"
-                    "Try one of these:\n"
+
+                    "Try:\n"
                     "`26/08/2026`\n"
                     "`26/8/26`\n"
                     "`2026-08-26`\n"
                     "`26 August 2026`"
+
                 )
 
                 return
 
     # --------------------------------------------------------
-    # START RECOVERY
+    # DISPLAY
     # --------------------------------------------------------
 
-    if requested_animator:
+    animator_text = (
 
-        animator_text = requested_animator
+        requested_animator
+        if requested_animator
+        else "ALL ANIMATORS"
 
-    else:
+    )
 
-        animator_text = "ALL ANIMATORS"
+    date_text = (
 
-    if requested_date:
-
-        date_text = requested_date.strftime(
+        requested_date.strftime(
             "%d/%m/%Y"
         )
 
-        await ctx.send(
-            "🔎 Starting recovery...\n"
-            f"👤 Animator: **{animator_text}**\n"
-            f"📅 Date: **{date_text}**\n\n"
-            "This may take a while."
-        )
+        if requested_date
 
-    else:
+        else "ALL DATES"
 
-        await ctx.send(
-            "🔎 Starting recovery...\n"
-            f"👤 Animator: **{animator_text}**\n"
-            "📅 Date: **ALL DATES**\n\n"
-            "This may take a while."
-        )
-
-    await check_missed_messages(
-        requested_animator=requested_animator,
-        requested_date=requested_date
     )
 
     await ctx.send(
-        "✅ Recovery finished.\n"
-        "Check the Render logs for the detailed summary."
+
+        "🔎 **Starting recovery...**\n\n"
+
+        f"👤 Animator: **{animator_text}**\n"
+
+        f"📅 Date: **{date_text}**\n\n"
+
+        "The bot will skip messages that are "
+        "already in Google Sheets. 👍"
+
+    )
+
+    # --------------------------------------------------------
+    # RUN RECOVERY
+    # --------------------------------------------------------
+
+    await check_missed_messages(
+
+        requested_animator=
+            requested_animator,
+
+        requested_date=
+            requested_date
+
+    )
+
+    await ctx.send(
+
+        "✅ **Recovery finished!**\n\n"
+
+        "New messages were added, while "
+        "existing message IDs were skipped."
+
     )
 
 
 # ============================================================
-# !STOPRECOVER COMMAND
+# !STOPRECOVER
 # ============================================================
 
-@bot.command(name="stoprecover")
+@bot.command(
+    name="stoprecover"
+)
 async def stop_recover_command(ctx):
 
     global recovery_stop_requested
@@ -1325,7 +1657,9 @@ async def stop_recover_command(ctx):
     if not recovery_running:
 
         await ctx.send(
+
             "ℹ️ There is no recovery running right now."
+
         )
 
         return
@@ -1333,13 +1667,15 @@ async def stop_recover_command(ctx):
     recovery_stop_requested = True
 
     await ctx.send(
-        "🛑 Stop request received. "
+
+        "🛑 Stop request received.\n"
         "The recovery will stop shortly."
+
     )
 
 
 # ============================================================
-# START FLASK SERVER
+# START FLASK
 # ============================================================
 
 flask_thread = Thread(
@@ -1351,11 +1687,13 @@ flask_thread.start()
 
 
 # ============================================================
-# START DISCORD BOT
+# START BOT
 # ============================================================
 
 print()
-print("Starting Animation Update Bot...")
+print(
+    "Starting Animation Update Bot..."
+)
 
 bot.run(
     DISCORD_TOKEN
