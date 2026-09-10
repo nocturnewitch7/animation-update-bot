@@ -108,19 +108,22 @@ def run_drive_test_sync():
 
     service = get_drive_service()
 
+    # With drive.file scope, the app can fully access files/folders
+    # that it creates itself. Create the Animation HQ media folder
+    # through the OAuth app and return its new ID.
+    folder_metadata = {
+        "name": "Animation HQ Media",
+        "mimeType": "application/vnd.google-apps.folder",
+    }
+
     folder = (
         service.files()
-        .get(
-            fileId=GOOGLE_DRIVE_FOLDER_ID,
+        .create(
+            body=folder_metadata,
             fields="id,name,mimeType",
         )
         .execute()
     )
-
-    if folder.get("mimeType") != "application/vnd.google-apps.folder":
-        raise RuntimeError(
-            "GOOGLE_DRIVE_FOLDER_ID does not point to a Google Drive folder."
-        )
 
     return folder
 
@@ -139,7 +142,7 @@ async def run_drive_test():
         )
 
         print("✅ OAuth authentication worked.")
-        print("✅ Drive folder is accessible.")
+        print("✅ Drive folder was created by Animation HQ.")
         print("Folder name:", folder.get("name", ""))
         print("Folder ID:", folder.get("id", ""))
         print("=" * 60)
