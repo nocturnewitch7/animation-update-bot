@@ -4,6 +4,10 @@ import json
 import re
 from datetime import datetime, timezone, timedelta
 
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+
 import discord
 from discord.ext import commands
 
@@ -17,6 +21,10 @@ from threading import Thread
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 GOOGLE_SCRIPT_URL = os.getenv("GOOGLE_SCRIPT_URL")
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+GOOGLE_REFRESH_TOKEN = os.getenv("GOOGLE_REFRESH_TOKEN")
+GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
 
 
 if not DISCORD_TOKEN:
@@ -48,6 +56,111 @@ ANIMATOR_ALIASES = {
     "syahruldayan": ["Syahrulul"],
     ".gravillion": ["Jenggo"],
 }
+
+
+# ============================================================
+# GOOGLE DRIVE OAUTH TEST
+# ============================================================
+
+DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file"
+
+
+def get_drive_service():
+
+    missing = []
+
+    if not GOOGLE_CLIENT_ID:
+        missing.append("GOOGLE_CLIENT_ID")
+
+    if not GOOGLE_CLIENT_SECRET:
+        missing.append("GOOGLE_CLIENT_SECRET")
+
+    if not GOOGLE_REFRESH_TOKEN:
+        missing.append("GOOGLE_REFRESH_TOKEN")
+
+    if not GOOGLE_DRIVE_FOLDER_ID:
+        missing.append("GOOGLE_DRIVE_FOLDER_ID")
+
+    if missing:
+        raise RuntimeError(
+            "Missing Render environment variable(s): "
+            + ", ".join(missing)
+        )
+
+    credentials = Credentials(
+        token=None,
+        refresh_token=GOOGLE_REFRESH_TOKEN,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=GOOGLE_CLIENT_ID,
+        client_secret=GOOGLE_CLIENT_SECRET,
+        scopes=[DRIVE_SCOPE],
+    )
+
+    return build(
+        "drive",
+        "v3",
+        credentials=credentials,
+        cache_discovery=False,
+    )
+
+
+def run_drive_test_sync():
+
+    service = get_drive_service()
+
+    folder = (
+        service.files()
+        .get(
+            fileId=GOOGLE_DRIVE_FOLDER_ID,
+            fields="id,name,mimeType",
+        )
+        .execute()
+    )
+
+    if folder.get("mimeType") != "application/vnd.google-apps.folder":
+        raise RuntimeError(
+            "GOOGLE_DRIVE_FOLDER_ID does not point to a Google Drive folder."
+        )
+
+    return folder
+
+
+async def run_drive_test():
+
+    print()
+    print("=" * 60)
+    print("GOOGLE DRIVE TEST")
+    print("=" * 60)
+
+    try:
+
+        folder = await asyncio.to_thread(
+            run_drive_test_sync
+        )
+
+        print("✅ OAuth authentication worked.")
+        print("✅ Drive folder is accessible.")
+        print("Folder name:", folder.get("name", ""))
+        print("Folder ID:", folder.get("id", ""))
+        print("=" * 60)
+
+        return True, folder.get("name", "")
+
+    except HttpError as e:
+
+        print("❌ GOOGLE DRIVE API ERROR")
+        print(e)
+        print("=" * 60)
+
+        return False, str(e)
+
+    except Exception as e:
+
+        print("❌ GOOGLE DRIVE TEST FAILED")
+        print(e)
+        print("=" * 60)
+
+        return False, str(e)
 
 
 # ============================================================
@@ -1359,6 +1472,10 @@ async def on_ready():
     )
 
     print(
+        "!drivetest"
+    )
+
+    print(
         "=" * 60
     )
 
@@ -1641,6 +1758,37 @@ async def recover_command(
         "existing message IDs were skipped."
 
     )
+
+
+# ============================================================
+# !DRIVETEST
+# ============================================================
+
+@bot.command(
+    name="drivetest"
+)
+async def drive_test_command(ctx):
+
+    await ctx.send(
+        "☁️ Testing Animation HQ Google Drive connection..."
+    )
+
+    success, detail = await run_drive_test()
+
+    if success:
+
+        await ctx.send(
+            "✅ **Google Drive connection works!**\n"
+            f"Folder: **{detail}**"
+        )
+
+    else:
+
+        await ctx.send(
+            "❌ **Google Drive test failed.**\n"
+            "Check the Render logs for the exact Google error. "
+            "Don't paste your OAuth secrets into Discord."
+        )
 
 
 # ============================================================
