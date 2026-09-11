@@ -2,11 +2,15 @@ import os
 import asyncio
 import json
 import re
+import mimetypes
+import tempfile
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from googleapiclient.http import MediaFileUpload
 
 import discord
 from discord.ext import commands
@@ -59,7 +63,7 @@ ANIMATOR_ALIASES = {
 
 
 # ============================================================
-# GOOGLE DRIVE OAUTH TEST
+# GOOGLE DRIVE
 # ============================================================
 
 DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file"
@@ -108,22 +112,19 @@ def run_drive_test_sync():
 
     service = get_drive_service()
 
-    # With drive.file scope, the app can fully access files/folders
-    # that it creates itself. Create the Animation HQ media folder
-    # through the OAuth app and return its new ID.
-    folder_metadata = {
-        "name": "Animation HQ Media",
-        "mimeType": "application/vnd.google-apps.folder",
-    }
-
     folder = (
         service.files()
-        .create(
-            body=folder_metadata,
+        .get(
+            fileId=GOOGLE_DRIVE_FOLDER_ID,
             fields="id,name,mimeType",
         )
         .execute()
     )
+
+    if folder.get("mimeType") != "application/vnd.google-apps.folder":
+        raise RuntimeError(
+            "GOOGLE_DRIVE_FOLDER_ID does not point to a Google Drive folder."
+        )
 
     return folder
 
@@ -142,7 +143,7 @@ async def run_drive_test():
         )
 
         print("✅ OAuth authentication worked.")
-        print("✅ Drive folder was created by Animation HQ.")
+        print("✅ Configured Drive folder is accessible.")
         print("Folder name:", folder.get("name", ""))
         print("Folder ID:", folder.get("id", ""))
         print("=" * 60)
@@ -164,6 +165,299 @@ async def run_drive_test():
         print("=" * 60)
 
         return False, str(e)
+
+
+# ============================================================
+# MEDIA HELPERS
+# ============================================================
+
+def sanitize_filename_part(value, max_length=80):
+
+    value = str(value or "").strip()
+    value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", value)
+    value = re.sub(r"\s+", " ", value).strip(" .")
+
+    if not value:
+        return "NA"
+
+    return value[:max_length]
+
+
+def attachment_media_type(attachment):
+
+    content_type = (
+        getattr(attachment, "content_type", None)
+        or ""
+    ).lower()
+
+    if content_type.startswith("image/"):
+        return "image"
+
+    if content_type.startswith("video/"):
+        return "video"
+
+    guessed_type, _ = mimetypes.guess_type(
+        getattr(attachment, "filename", "")
+    )
+
+    guessed_type = (guessed_type or "").lower()
+
+    if guessed_type.startswith("image/"):
+        return "image"
+
+    if guessed_type.startswith("video/"):
+        return "video"
+
+    return ""
+
+
+def find_existing_drive_file_sync(attachment_id):
+
+    service = get_drive_service()
+
+    query = (
+        f"'{GOOGLE_DRIVE_FOLDER_ID}' in parents "
+        "and trashed = false "
+        "and appProperties has "
+        "{ key='discord_attachment_id' "
+        f"and value='{attachment_id}' }}"
+    )
+
+    result = (
+        service.files()
+        .list(
+            q=query,
+            spaces="drive",
+            fields="files(id,name,mimeType,webViewLink,appProperties)",
+            pageSize=10,
+        )
+        .execute()
+    )
+
+    files = result.get("files", [])
+    return files[0] if files else None
+
+
+def upload_file_to_drive_sync(
+    temp_path,
+    upload_name,
+    mime_type,
+    attachment_id,
+    message_id,
+    animator,
+    shot_task
+):
+
+    service = get_drive_service()
+
+    file_metadata = {
+        "name": upload_name,
+        "parents": [GOOGLE_DRIVE_FOLDER_ID],
+        "appProperties": {
+            "discord_attachment_id": str(attachment_id),
+            "discord_message_id": str(message_id),
+            "animator": sanitize_filename_part(animator, 60),
+            "shot_task": sanitize_filename_part(shot_task, 100),
+        },
+    }
+
+    media = MediaFileUpload(
+        temp_path,
+        mimetype=mime_type,
+        resumable=True,
+    )
+
+    return (
+        service.files()
+        .create(
+            body=file_metadata,
+            media_body=media,
+            fields="id,name,mimeType,webViewLink,appProperties",
+        )
+        .execute()
+    )
+
+
+async def get_or_upload_attachment(
+    attachment,
+    date_string,
+    username,
+    shot_task,
+    message_id
+):
+
+    attachment_id = str(attachment.id)
+
+    existing = await asyncio.to_thread(
+        find_existing_drive_file_sync,
+        attachment_id
+    )
+
+    if existing:
+        print(
+            "🔄 Media already exists in Drive:",
+            existing.get("name", attachment.filename)
+        )
+        return existing
+
+    original_name = (
+        attachment.filename
+        or f"attachment_{attachment_id}"
+    )
+
+    suffix = Path(original_name).suffix
+
+    temp_file = tempfile.NamedTemporaryFile(
+        prefix="animation_hq_",
+        suffix=suffix,
+        delete=False,
+    )
+
+    temp_path = temp_file.name
+    temp_file.close()
+
+    try:
+        print("⬇️ Downloading Discord attachment:", original_name)
+        await attachment.save(temp_path)
+
+        mime_type = (
+            attachment.content_type
+            or mimetypes.guess_type(original_name)[0]
+            or "application/octet-stream"
+        )
+
+        upload_name = "_".join([
+            sanitize_filename_part(date_string, 20),
+            sanitize_filename_part(username, 40),
+            sanitize_filename_part(shot_task, 70),
+            sanitize_filename_part(str(message_id), 30),
+            sanitize_filename_part(original_name, 120),
+        ])
+
+        print("☁️ Uploading to Google Drive:", upload_name)
+
+        uploaded = await asyncio.to_thread(
+            upload_file_to_drive_sync,
+            temp_path,
+            upload_name,
+            mime_type,
+            attachment_id,
+            message_id,
+            username,
+            shot_task
+        )
+
+        print("✅ Drive upload complete:", uploaded.get("name", upload_name))
+        return uploaded
+
+    finally:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
+
+
+async def process_media_attachments(
+    message,
+    date_string,
+    time_string,
+    username,
+    shot_task
+):
+
+    attachments = list(
+        getattr(message, "attachments", [])
+        or []
+    )
+
+    if not attachments:
+        print("No media attachments on this update.")
+        return {
+            "found": 0,
+            "uploaded_or_found": 0,
+            "logged": 0,
+            "duplicates": 0,
+            "errors": 0,
+        }
+
+    print()
+    print("MEDIA ATTACHMENTS FOUND:", len(attachments))
+
+    stats = {
+        "found": len(attachments),
+        "uploaded_or_found": 0,
+        "logged": 0,
+        "duplicates": 0,
+        "errors": 0,
+    }
+
+    for attachment in attachments:
+
+        media_type = attachment_media_type(attachment)
+
+        if not media_type:
+            print(
+                "⏭️ Skipping non-image/video attachment:",
+                attachment.filename
+            )
+            continue
+
+        try:
+            drive_file = await get_or_upload_attachment(
+                attachment,
+                date_string,
+                username,
+                shot_task,
+                str(message.id)
+            )
+
+            stats["uploaded_or_found"] += 1
+
+            drive_file_id = str(drive_file.get("id", ""))
+            drive_url = (
+                drive_file.get("webViewLink", "")
+                or (
+                    "https://drive.google.com/file/d/"
+                    + drive_file_id
+                    + "/view"
+                )
+            )
+
+            media_payload = {
+                "payload_type": "media",
+                "date": date_string,
+                "time": time_string,
+                "username": username,
+                "task": shot_task,
+                "message_id": str(message.id),
+                "attachment_id": str(attachment.id),
+                "media_type": media_type,
+                "file_name": attachment.filename or drive_file.get("name", ""),
+                "drive_file_id": drive_file_id,
+                "drive_url": drive_url,
+            }
+
+            media_result = await send_to_google_sheets(media_payload)
+
+            if media_result == "MEDIA_SUCCESS":
+                stats["logged"] += 1
+                print("✅ Media metadata added to Media_Logs.")
+
+            elif media_result == "MEDIA_DUPLICATE":
+                stats["duplicates"] += 1
+                print("🔄 Media metadata already exists. Skipping.")
+
+            else:
+                stats["errors"] += 1
+                print("❌ Media metadata logging failed.")
+
+        except Exception as e:
+            stats["errors"] += 1
+            print("❌ MEDIA PROCESSING ERROR:", attachment.filename)
+            print(e)
+
+    print("Media summary:", stats)
+    return stats
 
 
 # ============================================================
@@ -294,39 +588,29 @@ async def send_to_google_sheets(data):
                 result
             )
 
-            # ------------------------------------------------
-            # NEW UPDATE
-            # ------------------------------------------------
+            result_upper = result.upper()
 
-            if result.upper() == "SUCCESS":
-
-                print(
-                    "SUCCESS: Update sent to Google Sheets!"
-                )
-
+            if result_upper == "SUCCESS":
+                print("SUCCESS: Update sent to Google Sheets!")
                 return "SUCCESS"
 
-            # ------------------------------------------------
-            # DUPLICATE
-            # ------------------------------------------------
-
-            if result.upper() == "DUPLICATE":
-
-                print(
-                    "DUPLICATE: Update already exists. Skipping."
-                )
-
+            if result_upper == "DUPLICATE":
+                print("DUPLICATE: Update already exists. Skipping.")
                 return "DUPLICATE"
 
-            # ------------------------------------------------
-            # OTHER RESPONSE
-            # ------------------------------------------------
+            if result_upper == "MEDIA_SUCCESS":
+                print("MEDIA_SUCCESS: Media metadata sent to Google Sheets!")
+                return "MEDIA_SUCCESS"
 
-            print(
-                "WARNING: Unexpected Google Sheets response:",
-                result
-            )
+            if result_upper == "MEDIA_DUPLICATE":
+                print("MEDIA_DUPLICATE: Media metadata already exists.")
+                return "MEDIA_DUPLICATE"
 
+            if result_upper.startswith("ERROR"):
+                print("ERROR response from Google Sheets:", result)
+                return "ERROR"
+
+            print("WARNING: Unexpected Google Sheets response:", result)
             return "ERROR"
 
     except Exception as e:
@@ -975,6 +1259,17 @@ async def process_message(
 
         print(
             "❌ UPDATE FAILED"
+        )
+
+    # Also process media when the text row is already a duplicate.
+    # That allows !recover to restore missing media safely.
+    if result in ["SUCCESS", "DUPLICATE"]:
+        await process_media_attachments(
+            message,
+            date_string,
+            time_string,
+            username,
+            shot_task
         )
 
     return result
