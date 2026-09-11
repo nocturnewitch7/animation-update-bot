@@ -211,13 +211,106 @@ def attachment_media_type(attachment):
     return ""
 
 
-def find_existing_drive_file_sync(attachment_id):
+def ensure_animator_folder_sync(animator):
 
     service = get_drive_service()
+
+    folder_name = sanitize_filename_part(
+        animator,
+        80
+    )
+
+    # Escape single quotes for Drive query.
+    query_name = folder_name.replace(
+        "'",
+        "\\'"
+    )
 
     query = (
         f"'{GOOGLE_DRIVE_FOLDER_ID}' in parents "
         "and trashed = false "
+        "and mimeType = 'application/vnd.google-apps.folder' "
+        f"and name = '{query_name}'"
+    )
+
+    result = (
+        service.files()
+        .list(
+            q=query,
+            spaces="drive",
+            fields="files(id,name,parents)",
+            pageSize=10,
+        )
+        .execute()
+    )
+
+    folders = result.get(
+        "files",
+        []
+    )
+
+    if folders:
+
+        folder = folders[0]
+
+        print(
+            "📁 Animator folder found:",
+            folder.get("name", folder_name)
+        )
+
+        return folder
+
+
+    folder_metadata = {
+
+        "name":
+            folder_name,
+
+        "mimeType":
+            "application/vnd.google-apps.folder",
+
+        "parents": [
+            GOOGLE_DRIVE_FOLDER_ID
+        ],
+
+        "appProperties": {
+            "animation_hq_type":
+                "animator_folder",
+
+            "animator":
+                folder_name,
+        },
+
+    }
+
+    folder = (
+        service.files()
+        .create(
+            body=folder_metadata,
+            fields="id,name,parents",
+        )
+        .execute()
+    )
+
+    print(
+        "📁 Created animator folder:",
+        folder.get("name", folder_name)
+    )
+
+    return folder
+
+
+def find_existing_drive_file_sync(
+    attachment_id
+):
+
+    service = get_drive_service()
+
+    # Search by Discord Attachment ID across files created by this app.
+    # This lets old root-level uploads be found and moved into the
+    # correct animator folder without re-uploading them.
+    query = (
+        "trashed = false "
         "and appProperties has "
         "{ key='discord_attachment_id' "
         f"and value='{attachment_id}' }}"
@@ -228,14 +321,99 @@ def find_existing_drive_file_sync(attachment_id):
         .list(
             q=query,
             spaces="drive",
-            fields="files(id,name,mimeType,webViewLink,appProperties)",
+            fields=(
+                "files("
+                "id,"
+                "name,"
+                "mimeType,"
+                "webViewLink,"
+                "parents,"
+                "appProperties"
+                ")"
+            ),
             pageSize=10,
         )
         .execute()
     )
 
-    files = result.get("files", [])
-    return files[0] if files else None
+    files = result.get(
+        "files",
+        []
+    )
+
+    if files:
+        return files[0]
+
+    return None
+
+
+def move_existing_file_to_animator_folder_sync(
+    drive_file,
+    animator_folder_id
+):
+
+    service = get_drive_service()
+
+    file_id = drive_file.get(
+        "id",
+        ""
+    )
+
+    if not file_id:
+        return drive_file
+
+    current_parents = drive_file.get(
+        "parents",
+        []
+    ) or []
+
+    if animator_folder_id in current_parents:
+        return drive_file
+
+    remove_parents = ",".join(
+        current_parents
+    )
+
+    kwargs = {
+        "fileId":
+            file_id,
+
+        "addParents":
+            animator_folder_id,
+
+        "fields":
+            (
+                "id,"
+                "name,"
+                "mimeType,"
+                "webViewLink,"
+                "parents,"
+                "appProperties"
+            ),
+    }
+
+    if remove_parents:
+        kwargs[
+            "removeParents"
+        ] = remove_parents
+
+    moved = (
+        service.files()
+        .update(
+            **kwargs
+        )
+        .execute()
+    )
+
+    print(
+        "📦 Moved existing media into animator folder:",
+        moved.get(
+            "name",
+            drive_file.get("name", "")
+        )
+    )
+
+    return moved
 
 
 def upload_file_to_drive_sync(
@@ -245,20 +423,43 @@ def upload_file_to_drive_sync(
     attachment_id,
     message_id,
     animator,
-    shot_task
+    shot_task,
+    animator_folder_id
 ):
 
     service = get_drive_service()
 
     file_metadata = {
-        "name": upload_name,
-        "parents": [GOOGLE_DRIVE_FOLDER_ID],
+
+        "name":
+            upload_name,
+
+        "parents": [
+            animator_folder_id
+        ],
+
         "appProperties": {
-            "discord_attachment_id": str(attachment_id),
-            "discord_message_id": str(message_id),
-            "animator": sanitize_filename_part(animator, 60),
-            "shot_task": sanitize_filename_part(shot_task, 100),
-        },
+
+            "discord_attachment_id":
+                str(attachment_id),
+
+            "discord_message_id":
+                str(message_id),
+
+            "animator":
+                sanitize_filename_part(
+                    animator,
+                    60
+                ),
+
+            "shot_task":
+                sanitize_filename_part(
+                    shot_task,
+                    100
+                ),
+
+        }
+
     }
 
     media = MediaFileUpload(
@@ -267,15 +468,24 @@ def upload_file_to_drive_sync(
         resumable=True,
     )
 
-    return (
+    uploaded = (
         service.files()
         .create(
             body=file_metadata,
             media_body=media,
-            fields="id,name,mimeType,webViewLink,appProperties",
+            fields=(
+                "id,"
+                "name,"
+                "mimeType,"
+                "webViewLink,"
+                "parents,"
+                "appProperties"
+            ),
         )
         .execute()
     )
+
+    return uploaded
 
 
 async def get_or_upload_attachment(
@@ -286,7 +496,29 @@ async def get_or_upload_attachment(
     message_id
 ):
 
-    attachment_id = str(attachment.id)
+    attachment_id = str(
+        attachment.id
+    )
+
+    # --------------------------------------------------------
+    # ENSURE ANIMATOR FOLDER
+    # --------------------------------------------------------
+
+    animator_folder = await asyncio.to_thread(
+        ensure_animator_folder_sync,
+        username
+    )
+
+    animator_folder_id = str(
+        animator_folder.get(
+            "id",
+            ""
+        )
+    )
+
+    # --------------------------------------------------------
+    # DRIVE-LEVEL DEDUP
+    # --------------------------------------------------------
 
     existing = await asyncio.to_thread(
         find_existing_drive_file_sync,
@@ -294,18 +526,36 @@ async def get_or_upload_attachment(
     )
 
     if existing:
+
+        existing = await asyncio.to_thread(
+            move_existing_file_to_animator_folder_sync,
+            existing,
+            animator_folder_id
+        )
+
         print(
             "🔄 Media already exists in Drive:",
-            existing.get("name", attachment.filename)
+            existing.get(
+                "name",
+                attachment.filename
+            )
         )
+
         return existing
+
+
+    # --------------------------------------------------------
+    # SAVE DISCORD ATTACHMENT TO RENDER TEMP STORAGE
+    # --------------------------------------------------------
 
     original_name = (
         attachment.filename
         or f"attachment_{attachment_id}"
     )
 
-    suffix = Path(original_name).suffix
+    suffix = Path(
+        original_name
+    ).suffix
 
     temp_file = tempfile.NamedTemporaryFile(
         prefix="animation_hq_",
@@ -317,42 +567,91 @@ async def get_or_upload_attachment(
     temp_file.close()
 
     try:
-        print("⬇️ Downloading Discord attachment:", original_name)
-        await attachment.save(temp_path)
+
+        print(
+            "⬇️ Downloading Discord attachment:",
+            original_name
+        )
+
+        await attachment.save(
+            temp_path
+        )
 
         mime_type = (
             attachment.content_type
-            or mimetypes.guess_type(original_name)[0]
+            or mimetypes.guess_type(
+                original_name
+            )[0]
             or "application/octet-stream"
         )
 
         upload_name = "_".join([
-            sanitize_filename_part(date_string, 20),
-            sanitize_filename_part(username, 40),
-            sanitize_filename_part(shot_task, 70),
-            sanitize_filename_part(str(message_id), 30),
-            sanitize_filename_part(original_name, 120),
+
+            sanitize_filename_part(
+                date_string,
+                20
+            ),
+
+            sanitize_filename_part(
+                username,
+                40
+            ),
+
+            sanitize_filename_part(
+                shot_task,
+                70
+            ),
+
+            sanitize_filename_part(
+                str(message_id),
+                30
+            ),
+
+            sanitize_filename_part(
+                original_name,
+                120
+            ),
+
         ])
 
-        print("☁️ Uploading to Google Drive:", upload_name)
+        print(
+            "☁️ Uploading to Google Drive:",
+            upload_name
+        )
 
         uploaded = await asyncio.to_thread(
+
             upload_file_to_drive_sync,
+
             temp_path,
             upload_name,
             mime_type,
             attachment_id,
             message_id,
             username,
-            shot_task
+            shot_task,
+            animator_folder_id
+
         )
 
-        print("✅ Drive upload complete:", uploaded.get("name", upload_name))
+        print(
+            "✅ Drive upload complete:",
+            uploaded.get(
+                "name",
+                upload_name
+            )
+        )
+
         return uploaded
 
     finally:
+
         try:
-            os.remove(temp_path)
+
+            os.remove(
+                temp_path
+            )
+
         except OSError:
             pass
 
